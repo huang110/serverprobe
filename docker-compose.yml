@@ -95,7 +95,7 @@ services:
       server:
         condition: service_healthy
     volumes:
-      - ./agent/config.yaml:/app/config.yaml:ro
+      - ./agent/config.yaml:/app/config.yaml
       - ./agent/scripts:/app/scripts
     networks:
       - serverprobe

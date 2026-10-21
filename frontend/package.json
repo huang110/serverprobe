@@ -1,7 +1,7 @@
 {
   "name": "serverprobe-frontend",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "ServerProbe 轻量级服务器监控系统前端监控大屏",
   "scripts": {

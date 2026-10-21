@@ -17,6 +17,15 @@
 
 ---
 
+## [1.0.1] - 2026-10-21
+
+### 修复
+
+- Docker Compose 中 Agent 配置文件改为可写挂载，修复注册成功后无法保存 `agent_id` / `token` 的问题
+- 版本号统一更新为 1.0.1
+
+---
+
 ## [1.0.0] - 2026-10-21
 
 ### 新增
@@ -61,5 +70,6 @@
 - `GetConfigResponse` / `RotateTokenResponse` 协议缺少 `message` 字段
 - 当前环境未实际运行 Docker Compose 与 Playwright 浏览器测试
 
-[Unreleased]: https://github.com/huang110/serverprobe/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/huang110/serverprobe/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/huang110/serverprobe/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/huang110/serverprobe/releases/tag/v1.0.0
