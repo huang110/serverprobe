@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-agent:
+    name: Test Agent
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache-dependency-path: agent/go.sum
+      - name: Download dependencies
+        working-directory: ./agent
+        run: go mod download
+      - name: Run tests
+        working-directory: ./agent
+        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+      - name: Upload coverage
+        if: always()
+        continue-on-error: true
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./agent/coverage.txt
+          flags: agent
+
+  test-server:
+    name: Test Server
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache-dependency-path: server/go.sum
+      - name: Download dependencies
+        working-directory: ./server
+        run: go mod download
+      - name: Run tests
+        working-directory: ./server
+        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+        env:
+          REDIS_ADDR: localhost:6379
+      - name: Upload coverage
+        if: always()
+        continue-on-error: true
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./server/coverage.txt
+          flags: server
+
+  test-integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache-dependency-path: |
+            server/go.sum
+            tests/go.sum
+      - name: Run integration tests
+        working-directory: ./tests
+        run: go test -v -timeout 10m ./...
+
+  test-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: npm ci
+      - name: Type check
+        working-directory: ./frontend
+        run: npm run type-check
+      - name: Build
+        working-directory: ./frontend
+        run: npm run build
+
+  lint-go:
+    name: Lint Go Code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      - name: Lint server
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: v1.59.1
+          working-directory: ./server
+          args: --config ../.golangci.yml --timeout 5m
+      - name: Lint agent
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: v1.59.1
+          working-directory: ./agent
+          args: --config ../.golangci.yml --timeout 5m

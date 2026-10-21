@@ -1,0 +1,84 @@
+name: Bug 报告
+description: 报告一个问题以帮助我们改进
+title: "[Bug]: "
+labels: ["bug"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢您花时间填写此 Bug 报告！
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 清晰简洁地描述问题
+      placeholder: 告诉我们发生了什么
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 如何复现此问题
+      placeholder: |
+        1. 访问 '...'
+        2. 点击 '...'
+        3. 滚动到 '...'
+        4. 看到错误
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+      description: 您期望发生什么
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志或截图
+      description: 如果适用，添加日志或截图
+      placeholder: 粘贴日志或拖放截图
+
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: 您使用的 ServerProbe 版本
+      placeholder: v1.0.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: 组件
+      description: 问题出现在哪个组件
+      options:
+        - Agent
+        - Server
+        - Frontend
+        - Docker
+        - 文档
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: 操作系统
+      description: 您的操作系统和版本
+      placeholder: Ubuntu 22.04, Windows 11, macOS 14
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: 其他信息
+      description: 其他有助于解决问题的信息

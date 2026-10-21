@@ -1,0 +1,38 @@
+# Docker 环境 Agent 配置
+agent:
+  id: ""
+  token: ""
+  token_expires_at: 0
+  lite_mode: false
+
+server:
+  address: "server:9090"
+  register_secret: "change-me-in-production"
+  tls_mode: "none"
+  ca_cert: ""
+  client_cert: ""
+  client_key: ""
+
+monitor:
+  heartbeat_interval: 30
+  collect_interval: 30
+  network_interfaces:
+    - "eth*"
+    - "ens*"
+    - "en*"
+  disk_mounts:
+    - "/"
+  exclude_fs_types:
+    - "tmpfs"
+    - "devtmpfs"
+    - "squashfs"
+    - "overlay"
+
+log:
+  level: "info"
+  file: ""
+  max_size: 100
+  max_days: 7
+
+labels:
+  environment: "docker"

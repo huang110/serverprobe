@@ -1,0 +1,50 @@
+# ServerProbe Server 生产环境配置模板
+# 建议通过环境变量覆盖敏感项：
+#   SERVERPROBE_DATABASE_DSN
+#   SERVERPROBE_REDIS_PASSWORD
+#   SERVERPROBE_JWT_SECRET
+#   SERVERPROBE_JWT_ADMIN_PASSWORD
+
+server:
+  http_address: ":8080"
+  grpc_address: ":9090"
+  mode: "release"
+
+database:
+  driver: "mysql"
+  dsn: "serverprobe:CHANGE_ME@tcp(127.0.0.1:3306)/serverprobe?charset=utf8mb4&parseTime=True&loc=UTC"
+  max_open_conns: 100
+  max_idle_conns: 20
+
+redis:
+  addr: "127.0.0.1:6379"
+  password: ""
+  db: 0
+
+agent:
+  register_secret: "CHANGE_ME_REGISTER_SECRET"
+  heartbeat_interval: 30
+  token_expires_days: 7
+
+jwt:
+  secret: "CHANGE_ME_JWT_SECRET_AT_LEAST_32_CHARS"
+  admin_username: "admin"
+  admin_password: "CHANGE_ME_ADMIN_PASSWORD"
+
+alert:
+  check_interval: 30
+
+aggregation:
+  enabled: true
+  interval_seconds: 300
+  include_current_bucket: false
+
+cors:
+  allowed_origins:
+    - "https://monitor.example.com"
+
+rate_limit:
+  enabled: true
+  requests_per_second: 100
+
+enable_ip_quality: false

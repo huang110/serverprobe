@@ -1,0 +1,47 @@
+# ServerProbe Server 配置示例
+
+server:
+  http_port: 8080
+  grpc_port: 9090
+  mode: "release"          # debug / release
+
+database:
+  driver: "mysql"          # mysql / sqlite
+  dsn: "root:root@tcp(mysql:3306)/serverprobe?charset=utf8mb4&parseTime=True&loc=UTC"
+  max_open_conns: 100
+  max_idle_conns: 10
+
+redis:
+  addr: "redis:6379"
+  password: ""
+  db: 0
+
+agent:
+  register_secret: "change-me-in-production"
+  heartbeat_interval: 30
+  token_expires_days: 7
+
+jwt:
+  secret: "change-me-too"
+  admin_username: "admin"
+  admin_password: "admin123"
+
+alert:
+  check_interval: 30
+
+aggregation:
+  enabled: true
+  interval_seconds: 300
+  include_current_bucket: false
+
+cors:
+  allowed_origins:
+    - "http://localhost:5173"
+    - "http://localhost:3000"
+    - "https://dashboard.example.com"
+
+rate_limit:
+  enabled: true
+  requests_per_second: 100
+
+enable_ip_quality: false

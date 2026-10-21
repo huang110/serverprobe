@@ -1,0 +1,61 @@
+# 二进制与构建产物
+server/server
+server/server.exe
+agent/agent
+agent/agent.exe
+*.exe
+*.dll
+*.so
+*.dylib
+
+# 测试与覆盖率
+*.test
+*.out
+coverage.txt
+coverage.html
+tests/*.db
+tests/*.log
+
+# 临时文件
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 本地配置文件（保留示例）
+server/config.yaml
+agent/config.yaml
+.env
+
+# 数据文件
+*.db
+*.db-shm
+*.db-wal
+*.rdb
+data/
+backups/
+
+# 依赖与构建
+vendor/
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/playwright-report/
+frontend/test-results/
+.idea/
+.vscode/
+*.iml
+
+# Go
+go.work
+go.work.sum
+
+# 操作系统
+Thumbs.db
+Desktop.ini
+
+# CI/CD 缓存
+.github/.cache/

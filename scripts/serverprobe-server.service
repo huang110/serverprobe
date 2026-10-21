@@ -1,0 +1,25 @@
+[Unit]
+Description=ServerProbe Monitoring Server
+After=network.target mysql.service redis.service
+Wants=mysql.service redis.service
+
+[Service]
+Type=simple
+User=serverprobe
+Group=serverprobe
+WorkingDirectory=/opt/serverprobe/server
+ExecStart=/opt/serverprobe/server/server -config /opt/serverprobe/server/config.yaml
+Restart=on-failure
+RestartSec=10s
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/serverprobe/server/logs
+
+LimitNOFILE=65535
+LimitNPROC=4096
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=ServerProbe Monitoring Agent
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/serverprobe/agent
+ExecStart=/opt/serverprobe/agent/agent -config /opt/serverprobe/agent/config.yaml
+Restart=always
+RestartSec=10s
+
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
