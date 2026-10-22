@@ -2,17 +2,20 @@
 /**
  * 登录页：居中卡片，调用登录接口并保存 Token。
  */
-import { reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useWebSocketStore } from '@/stores/websocket'
 import { useToastStore } from '@/stores/toast'
+import { usePrefsStore } from '@/stores/prefs'
+import AppLogo from '@/components/AppLogo.vue'
 
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const wsStore = useWebSocketStore()
 const toastStore = useToastStore()
+const prefsStore = usePrefsStore()
 
 const form = reactive({
   username: 'admin',
@@ -20,6 +23,14 @@ const form = reactive({
 })
 const loading = ref(false)
 const errorMsg = ref('')
+
+// 登录页固定深色：挂载时临时覆盖 <html data-theme>，卸载时恢复用户主题
+const savedTheme = prefsStore.theme
+onMounted(() => document.documentElement.setAttribute('data-theme', 'dark'))
+onBeforeUnmount(() => {
+  prefsStore.theme = savedTheme
+  prefsStore.applyToDocument()
+})
 
 async function handleLogin() {
   errorMsg.value = ''
@@ -62,14 +73,10 @@ async function handleLogin() {
     <div class="relative z-10 w-full max-w-md animate-fade-in">
       <!-- 标题 -->
       <div class="mb-8 text-center">
-        <span class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent/15">
-          <svg class="h-8 w-8 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <rect x="3" y="4" width="18" height="6" rx="1.5" />
-            <rect x="3" y="12" width="18" height="4" rx="1.5" />
-            <rect x="3" y="18" width="18" height="3" rx="1.5" />
-          </svg>
+        <span class="mx-auto mb-4 flex justify-center">
+          <AppLogo :size="56" />
         </span>
-        <h1 class="text-2xl font-bold text-white">ServerProbe</h1>
+        <h1 class="mt-3 text-2xl font-bold text-white">ServerProbe</h1>
         <p class="mt-1 text-sm text-muted">轻量级服务器监控系统</p>
       </div>
 

@@ -1,18 +1,37 @@
 <!doctype html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ServerProbe 监控系统</title>
-    <style>
-      /* 避免首屏白屏闪烁 */
-      html,
-      body {
-        background: #0d1117;
-        margin: 0;
-      }
-    </style>
+    <script>
+      // 在应用渲染前应用主题，避免刷新时闪烁（FOUC）
+      (function () {
+        try {
+          var prefs = JSON.parse(localStorage.getItem('prefs') || '{}')
+          var theme = prefs.theme || 'dark'
+          if (theme === 'auto') {
+            theme = window.matchMedia('(prefers-color-scheme: light)').matches
+              ? 'light'
+              : 'dark'
+          }
+          document.documentElement.setAttribute('data-theme', theme)
+          document.documentElement.setAttribute(
+            'data-contrast',
+            prefs.contrast || 'normal'
+          )
+          document.documentElement.setAttribute(
+            'data-density',
+            prefs.density || 'comfortable'
+          )
+          document.documentElement.style.background =
+            theme === 'light' ? '#f6f8fa' : '#0d1117'
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'dark')
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

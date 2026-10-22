@@ -29,7 +29,7 @@ const isOnline = computed(() => props.status === 'online')
       ></span>
       <span
         class="relative inline-flex h-2.5 w-2.5 rounded-full"
-        :class="isOnline ? 'bg-success' : 'bg-slate-500'"
+        :class="isOnline ? 'bg-success' : 'bg-muted'"
       ></span>
     </span>
     {{ isOnline ? onlineText : offlineText }}

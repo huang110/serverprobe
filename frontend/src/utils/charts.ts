@@ -1,5 +1,6 @@
 /**
- * ECharts 通用配置工厂（深色主题）。
+ * ECharts 通用配置工厂。
+ * 颜色从 CSS 变量读取，随主题（深色/浅色/高对比度）变化。
  */
 import type { EChartsOption } from 'echarts'
 import type { MetricPoint } from '@/types/metrics'
@@ -10,33 +11,45 @@ export interface SeriesDef {
   points: MetricPoint[]
 }
 
-/** 当数据点过多时做抽样，保证图表渲染性能 */
-function sample(points: MetricPoint[], max = 1500): Array<[number, number]> {
+/** 读取一个「空格分隔 RGB」的 CSS 变量，返回 rgb() 字符串 */
+function cssVar(name: string, alpha = 1): string {
+  const raw = getComputedStyle(document.documentElement)
+    .getPropertyValue(name)
+    .trim()
+  if (!raw) return `rgb(${name === '--muted' ? '139 148 163' : '43 49 60'})`
+  return `rgb(${raw}${alpha < 1 ? ` / ${alpha})` : ')'}`
+}
+
+/** 当数据点超过 1000 时自动降采样，保证图表渲染性能 */
+function sample(points: MetricPoint[], max = 1000): Array<[number, number]> {
   if (points.length <= max) {
     return points.map((p) => [p.timestamp * 1000, Number(p.value?.toFixed(2))])
   }
-  const step = Math.ceil(points.length / max)
+  // LTTB 之外的轻量方案：等步长抽样，保留首尾
+  const step = (points.length - 1) / (max - 1)
   const sampled: Array<[number, number]> = []
-  for (let i = 0; i < points.length; i += step) {
-    const p = points[i]
-    sampled.push([p.timestamp * 1000, Number(p.value?.toFixed(2))])
+  for (let i = 0; i < max; i++) {
+    const p = points[Math.round(i * step)]
+    if (p) sampled.push([p.timestamp * 1000, Number(p.value?.toFixed(2))])
   }
   return sampled
 }
 
-const AXIS_STYLE = {
-  axisLine: { lineStyle: { color: '#2b313c' } },
-  axisLabel: { color: '#8b94a3', fontSize: 11 },
-  splitLine: { lineStyle: { color: 'rgba(43,49,60,0.55)', type: 'dashed' as const } }
+function axisStyle() {
+  return {
+    axisLine: { lineStyle: { color: cssVar('--border') } },
+    axisLabel: { color: cssVar('--muted'), fontSize: 11 },
+    splitLine: { lineStyle: { color: cssVar('--border', 0.55), type: 'dashed' as const } }
+  }
 }
 
 function tooltipConfig(unit: string) {
   return {
     trigger: 'axis' as const,
-    backgroundColor: 'rgba(18,22,30,0.95)',
-    borderColor: '#2b313c',
-    textStyle: { color: '#e5e9f0', fontSize: 12 },
-    axisPointer: { type: 'line' as const, lineStyle: { color: '#3b82f6' } },
+    backgroundColor: cssVar('--surface', 0.96),
+    borderColor: cssVar('--border'),
+    textStyle: { color: cssVar('--text'), fontSize: 12 },
+    axisPointer: { type: 'line' as const, lineStyle: { color: cssVar('--accent') } },
     valueFormatter: (value: unknown) => `${value}${unit}`
   }
 }
@@ -61,29 +74,29 @@ export function buildLineOption(
       text: title,
       left: 4,
       top: 2,
-      textStyle: { color: '#e5e9f0', fontSize: 14, fontWeight: 600 }
+      textStyle: { color: cssVar('--text'), fontSize: 14, fontWeight: 600 }
     },
     tooltip: tooltipConfig(unit),
     legend: {
       data: seriesList.map((s) => s.name),
       top: 4,
       right: 8,
-      textStyle: { color: '#8b94a3' },
+      textStyle: { color: cssVar('--muted') },
       itemWidth: 14,
       itemHeight: 8
     },
     grid: { left: 48, right: 20, top: 48, bottom: 42 },
     xAxis: {
       type: 'time',
-      ...AXIS_STYLE
+      ...axisStyle()
     },
     yAxis: {
       type: 'value',
       min: percent ? 0 : undefined,
       max: percent ? 100 : undefined,
-      ...AXIS_STYLE,
+      ...axisStyle(),
       axisLabel: {
-        ...AXIS_STYLE.axisLabel,
+        ...axisStyle().axisLabel,
         formatter: percent ? '{value}%' : `{value}${unit}`
       }
     },
@@ -96,18 +109,22 @@ export function buildLineOption(
       symbolSize: 5,
       lineStyle: { width: 2, color: s.color },
       itemStyle: { color: s.color },
-      areaStyle: seriesList.length === 1
-        ? {
-            color: {
-              type: 'linear' as const,
-              x: 0, y: 0, x2: 0, y2: 1,
-              colorStops: [
-                { offset: 0, color: s.color + '40' },
-                { offset: 1, color: s.color + '00' }
-              ]
+      areaStyle:
+        seriesList.length === 1
+          ? {
+              color: {
+                type: 'linear' as const,
+                x: 0,
+                y: 0,
+                x2: 0,
+                y2: 1,
+                colorStops: [
+                  { offset: 0, color: s.color + '40' },
+                  { offset: 1, color: s.color + '00' }
+                ]
+              }
             }
-          }
-        : undefined,
+          : undefined,
       data: sample(s.points)
     }))
   }

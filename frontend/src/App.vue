@@ -3,14 +3,18 @@
  * 应用根组件：
  * - 已登录页面展示统一的顶部导航
  * - 全局挂载通知容器
+ * - 注册全局快捷键
  */
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
 import ToastContainer from '@/components/ToastContainer.vue'
+import { useShortcuts } from '@/composables/useShortcuts'
 
 const route = useRoute()
 const showChrome = computed(() => route.meta.public !== true)
+
+useShortcuts()
 </script>
 
 <template>

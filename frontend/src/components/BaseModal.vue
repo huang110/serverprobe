@@ -1,6 +1,8 @@
 <script setup lang="ts">
-/** 通用弹窗 */
-defineProps<{
+/** 通用弹窗：支持 ESC 关闭、焦点遮罩点击关闭 */
+import { onBeforeUnmount, watch } from 'vue'
+
+const props = defineProps<{
   show: boolean
   title?: string
   width?: string
@@ -9,6 +11,20 @@ defineProps<{
 const emit = defineEmits<{
   close: []
 }>()
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && props.show) emit('close')
+}
+
+watch(
+  () => props.show,
+  (visible) => {
+    if (visible) window.addEventListener('keydown', onKeydown)
+    else window.removeEventListener('keydown', onKeydown)
+  }
+)
+
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
@@ -21,13 +37,17 @@ const emit = defineEmits<{
       >
         <div class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
         <div
-          class="relative z-10 w-full animate-fade-in rounded-2xl border border-line bg-ink-800 shadow-2xl shadow-black/50"
+          role="dialog"
+          aria-modal="true"
+          :aria-label="title"
+          class="relative z-10 w-full animate-fade-in rounded-2xl border border-line bg-surface shadow-2xl shadow-black/50"
           :style="{ maxWidth: width || '560px' }"
         >
           <div class="flex items-center justify-between border-b border-line px-5 py-4">
-            <h3 class="text-base font-semibold text-slate-100">{{ title }}</h3>
+            <h3 class="text-base font-semibold text-content">{{ title }}</h3>
             <button
-              class="rounded-md p-1 text-muted transition hover:bg-ink-600 hover:text-white"
+              aria-label="关闭弹窗"
+              class="rounded-md p-1 text-muted transition hover:bg-surface-3 hover:text-content"
               @click="emit('close')"
             >
               <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">

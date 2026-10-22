@@ -4,7 +4,7 @@
  * 说明：当前后端仅提供规则的「查询」与「创建」接口（无更新/删除），
  *      因此表格中的编辑/删除按钮会提示接口暂未开放。
  */
-import { onMounted, reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import BaseModal from '@/components/BaseModal.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -127,8 +127,11 @@ function notSupported(action: string) {
 }
 
 onMounted(async () => {
+  window.addEventListener('app:refresh', loadRules)
   await Promise.all([loadRules(), listAllAgents().then((list) => (agents.value = list)).catch(() => {})])
 })
+
+onBeforeUnmount(() => window.removeEventListener('app:refresh', loadRules))
 </script>
 
 <template>
@@ -136,12 +139,21 @@ onMounted(async () => {
     <!-- 工具栏 -->
     <div class="mb-6 flex flex-wrap items-center gap-3">
       <div>
-        <h1 class="text-xl font-bold text-white">告警规则</h1>
+        <h1 class="text-xl font-bold text-content">告警规则</h1>
         <p class="mt-0.5 text-xs text-muted">配置指标阈值触发条件与 Webhook 通知</p>
       </div>
       <div class="ml-auto flex gap-2">
-        <button class="btn-ghost px-3 py-1.5 text-xs" @click="loadRules">刷新</button>
-        <button class="btn-primary px-3 py-1.5 text-xs" @click="openCreate">
+        <button
+          class="btn-ghost px-3 py-1.5 text-xs"
+          aria-label="刷新告警规则列表（快捷键 R）"
+          @click="loadRules"
+        >
+          <svg class="h-4 w-4" :class="loading && 'animate-spin'" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+          </svg>
+          刷新
+        </button>
+        <button class="btn-primary px-3 py-1.5 text-xs" aria-label="创建新的告警规则" @click="openCreate">
           <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
           </svg>
@@ -154,7 +166,7 @@ onMounted(async () => {
       <LoadingSpinner v-if="loading" />
       <EmptyState v-else-if="rules.length === 0" text="暂无告警规则" hint="点击右上角「创建规则」添加第一条规则" />
       <div v-else class="overflow-x-auto">
-        <table class="data-table">
+        <table class="data-table stack">
           <thead>
             <tr>
               <th>规则名称</th>
@@ -171,31 +183,32 @@ onMounted(async () => {
           </thead>
           <tbody>
             <tr v-for="rule in rules" :key="rule.id">
-              <td class="font-medium text-slate-100">{{ rule.name }}</td>
-              <td>
+              <span class="row-indicator"></span>
+              <td data-label="规则名称" class="font-medium text-content">{{ rule.name }}</td>
+              <td data-label="目标 Agent">
                 <span :class="rule.agent_id ? '' : 'text-accent'">
                   {{ agentName(rule.agent_id) }}
                 </span>
               </td>
-              <td class="whitespace-nowrap">{{ metricLabel(rule.metric) }}</td>
-              <td class="font-mono text-xs">{{ conditionLabel(rule.condition) }}</td>
-              <td class="font-mono text-xs">{{ rule.threshold }}</td>
-              <td class="whitespace-nowrap">{{ formatSeconds(rule.duration) }}</td>
-              <td><SeverityBadge :severity="rule.severity" /></td>
-              <td>
+              <td data-label="指标" class="whitespace-nowrap">{{ metricLabel(rule.metric) }}</td>
+              <td data-label="条件" class="font-mono text-xs">{{ conditionLabel(rule.condition) }}</td>
+              <td data-label="阈值" class="font-mono text-xs">{{ rule.threshold }}</td>
+              <td data-label="持续时间" class="whitespace-nowrap">{{ formatSeconds(rule.duration) }}</td>
+              <td data-label="严重级别"><SeverityBadge :severity="rule.severity" /></td>
+              <td data-label="状态">
                 <span
                   class="inline-flex items-center gap-1 text-xs"
                   :class="rule.enabled ? 'text-success' : 'text-muted'"
                 >
-                  <span class="h-1.5 w-1.5 rounded-full" :class="rule.enabled ? 'bg-success' : 'bg-slate-500'"></span>
+                  <span class="h-1.5 w-1.5 rounded-full" :class="rule.enabled ? 'bg-success' : 'bg-muted'"></span>
                   {{ rule.enabled ? '启用' : '停用' }}
                 </span>
               </td>
-              <td class="whitespace-nowrap text-xs text-muted">{{ formatDateTime(rule.created_at) }}</td>
-              <td>
+              <td data-label="创建时间" class="whitespace-nowrap text-xs text-muted">{{ formatDateTime(rule.created_at) }}</td>
+              <td data-label="操作">
                 <div class="flex justify-end gap-1.5">
-                  <button class="rounded-md px-2 py-1 text-xs text-muted transition hover:bg-ink-600 hover:text-accent" @click="notSupported('编辑规则')">编辑</button>
-                  <button class="rounded-md px-2 py-1 text-xs text-muted transition hover:bg-ink-600 hover:text-danger" @click="notSupported('删除规则')">删除</button>
+                  <button aria-label="编辑规则" class="rounded-md px-2 py-1 text-xs text-muted transition hover:bg-surface-3 hover:text-accent" @click="notSupported('编辑规则')">编辑</button>
+                  <button aria-label="删除规则" class="rounded-md px-2 py-1 text-xs text-muted transition hover:bg-surface-3 hover:text-danger" @click="notSupported('删除规则')">删除</button>
                 </div>
               </td>
             </tr>
@@ -259,16 +272,19 @@ onMounted(async () => {
         <div class="flex items-center gap-2 sm:col-span-2">
           <button
             type="button"
+            role="switch"
+            :aria-checked="form.enabled"
+            aria-label="启用或停用该规则"
             class="relative h-6 w-11 rounded-full transition"
-            :class="form.enabled ? 'bg-success' : 'bg-ink-500'"
+            :class="form.enabled ? 'bg-success' : 'bg-surface-3'"
             @click="form.enabled = !form.enabled"
           >
             <span
-              class="absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all"
+              class="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all"
               :class="form.enabled ? 'left-[22px]' : 'left-0.5'"
             ></span>
           </button>
-          <span class="text-sm text-slate-300">启用该规则</span>
+          <span class="text-sm text-content/90">启用该规则</span>
         </div>
       </div>
 

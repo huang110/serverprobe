@@ -40,11 +40,12 @@ function go(target: number) {
 </script>
 
 <template>
-  <div class="flex flex-wrap items-center justify-between gap-3 px-1 py-3 text-sm">
+  <nav class="flex flex-wrap items-center justify-between gap-3 px-1 py-3 text-sm" aria-label="分页导航">
     <div class="flex items-center gap-2 text-muted">
-      <span>共 <span class="font-medium text-slate-300">{{ total }}</span> 条</span>
+      <span aria-label="总记录数">共 <span class="font-medium text-content">{{ total }}</span> 条</span>
       <select
         class="form-input w-auto py-1 text-xs"
+        aria-label="每页显示条数"
         :value="pageSize"
         @change="emit('update:pageSize', Number(($event.target as HTMLSelectElement).value))"
       >
@@ -55,18 +56,20 @@ function go(target: number) {
     </div>
 
     <div class="flex items-center gap-1">
-      <button class="btn-ghost px-2 py-1 text-xs" :disabled="page === 1" @click="go(page - 1)">
+      <button class="btn-ghost px-2 py-1 text-xs" :disabled="page === 1" aria-label="上一页" @click="go(page - 1)">
         上一页
       </button>
       <template v-for="(item, idx) in pageItems" :key="idx">
-        <span v-if="item === '...'" class="px-1 text-muted">…</span>
+        <span v-if="item === '...'" class="px-1 text-muted" aria-hidden="true">…</span>
         <button
           v-else
           class="h-8 min-w-8 rounded-lg px-2 text-xs transition"
+          :aria-current="item === page ? 'page' : undefined"
+          :aria-label="`第 ${item} 页`"
           :class="
             item === page
               ? 'bg-accent font-semibold text-white'
-              : 'border border-line text-slate-300 hover:border-slate-500'
+              : 'border border-line text-muted hover:border-accent/60 hover:text-content'
           "
           @click="go(item)"
         >
@@ -76,10 +79,11 @@ function go(target: number) {
       <button
         class="btn-ghost px-2 py-1 text-xs"
         :disabled="page === totalPages"
+        aria-label="下一页"
         @click="go(page + 1)"
       >
         下一页
       </button>
     </div>
-  </div>
+  </nav>
 </template>

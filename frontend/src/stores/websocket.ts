@@ -1,24 +1,72 @@
 /**
  * WebSocket 连接状态管理。
- * 在用户登录后建立连接，将三类推送消息分发到 Agent 数据缓存与全局通知。
+ * - 将三类推送分发到 Agent 缓存与全局通知
+ * - 对高频 realtime_metrics 做批量节流（flush 间隔取用户刷新频率偏好）
+ * - 维护「触发中告警」计数，供顶栏 KPI 展示
  */
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { wsClient } from '@/utils/websocket'
 import { useAuthStore } from './auth'
 import { useAgentStore } from './agent'
 import { useToastStore } from './toast'
+import { usePrefsStore } from './prefs'
 import type {
   AgentStatusMessage,
   AlertMessage,
   RealtimeMetricsMessage
 } from '@/types/metrics'
 
+const SPARKLINE_LEN = 24
+
 export const useWebSocketStore = defineStore('websocket', () => {
   const connected = ref(false)
-  const state = { started: false }
+  const firingAlertCount = ref(0)
 
-  /** 建立连接并注册消息处理（仅一次） */
+  const state = {
+    started: false,
+    // 待合并的实时指标：agentId -> 最新一条
+    pending: new Map<string, RealtimeMetricsMessage>(),
+    flushTimer: 0 as ReturnType<typeof setInterval> | 0,
+    // 偏好监听的取消函数
+    prefsStop: null as null | (() => void)
+  }
+
+  /** 节流刷新间隔（秒），来自用户偏好，最小 1s */
+  function flushIntervalMs(): number {
+    const prefs = usePrefsStore()
+    return Math.max(1, prefs.refreshInterval) * 1000
+  }
+
+  /** 批量应用积压的实时指标，避免高频消息引发频繁重渲染 */
+  function flushMetrics() {
+    if (state.pending.size === 0) return
+    const agentStore = useAgentStore()
+    state.pending.forEach((data) => {
+      agentStore.patchMetrics(data.agent_id, {
+        cpuUsage: data.cpu_usage,
+        memoryPercent: data.memory_percent,
+        load1: data.load1,
+        netRxBytes: data.net_rx_bytes,
+        netTxBytes: data.net_tx_bytes,
+        lastHeartbeatAt: data.timestamp,
+        status: 'online'
+      })
+      agentStore.pushSpark(data.agent_id, {
+        cpu: data.cpu_usage,
+        memory: data.memory_percent,
+        load: data.load1,
+        net: (data.net_rx_bytes + data.net_tx_bytes) / 2
+      }, SPARKLINE_LEN)
+    })
+    state.pending.clear()
+  }
+
+  function startFlushLoop() {
+    if (state.flushTimer) clearInterval(state.flushTimer)
+    state.flushTimer = setInterval(flushMetrics, flushIntervalMs())
+  }
+
   function connect(): void {
     const authStore = useAuthStore()
     if (!authStore.token || state.started) return
@@ -29,40 +77,56 @@ export const useWebSocketStore = defineStore('websocket', () => {
       connected.value = isConnected
     }
 
+    // 实时指标：进入节流队列
     wsClient.on('realtime_metrics', (data: RealtimeMetricsMessage) => {
-      const agentStore = useAgentStore()
-      agentStore.patchMetrics(data.agent_id, {
-        cpuUsage: data.cpu_usage,
-        memoryPercent: data.memory_percent,
-        load1: data.load1,
-        netRxBytes: data.net_rx_bytes,
-        netTxBytes: data.net_tx_bytes,
-        lastHeartbeatAt: data.timestamp,
-        status: 'online'
-      })
+      state.pending.set(data.agent_id, data)
     })
 
     wsClient.on('agent_status', (data: AgentStatusMessage) => {
       const agentStore = useAgentStore()
       agentStore.updateStatus(data.agent_id, data.status, data.last_heartbeat_at)
+      if (data.status === 'offline') firingAlertCount.value = Math.max(0, firingAlertCount.value)
     })
 
     wsClient.on('alert', (data: AlertMessage) => {
       const toastStore = useToastStore()
       const type = data.severity === 'critical' ? 'danger' : 'warning'
-      const title = data.rule_name || '收到告警通知'
-      toastStore.push(type, title, data.message)
+      toastStore.push(type, data.rule_name || '收到告警通知', data.message)
+      if ((data.status || 'firing') === 'firing') firingAlertCount.value += 1
     })
 
+    startFlushLoop()
     wsClient.connect(authStore.token)
+
+    // 用户调整刷新频率偏好时，重启节流定时器
+    const prefsStore = usePrefsStore()
+    state.prefsStop = watch(
+      () => prefsStore.refreshInterval,
+      () => startFlushLoop()
+    )
   }
 
-  /** 断开连接（退出登录时调用） */
   function disconnect(): void {
     wsClient.disconnect()
     state.started = false
     connected.value = false
+    if (state.flushTimer) {
+      clearInterval(state.flushTimer)
+      state.flushTimer = 0
+    }
+    state.prefsStop?.()
+    state.prefsStop = null
+    state.pending.clear()
   }
 
-  return { connected, connect, disconnect }
+  const connectionLabel = computed(() => (connected.value ? '实时' : '连接中'))
+
+  return {
+    connected,
+    connectionLabel,
+    firingAlertCount,
+    connect,
+    disconnect,
+    flushMetrics
+  }
 })

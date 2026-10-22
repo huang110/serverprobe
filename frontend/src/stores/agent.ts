@@ -10,10 +10,18 @@ import type { Agent } from '@/types/agent'
 import type { RealtimeMetrics } from '@/types/metrics'
 import type { AgentLabels } from '@/types/agent'
 
+export interface SparkPoint {
+  cpu: number
+  memory: number
+  load: number
+  net: number
+}
+
 export const useAgentStore = defineStore('agent', () => {
   const agents = ref<Agent[]>([])
   const labelsMap = ref<Record<string, AgentLabels>>({})
   const metricsMap = ref<Record<string, RealtimeMetrics>>({})
+  const sparkMap = ref<Record<string, SparkPoint[]>>({})
   const loading = ref(false)
   const loaded = ref(false)
 
@@ -110,10 +118,22 @@ export const useAgentStore = defineStore('agent', () => {
     labelsMap.value[agentId] = labels
   }
 
+  /** 追加一个 sparkline 趋势点（环形缓冲，固定长度） */
+  function pushSpark(agentId: string, point: SparkPoint, maxLen: number): void {
+    const list = sparkMap.value[agentId]
+    if (!list) {
+      sparkMap.value[agentId] = [point]
+      return
+    }
+    list.push(point)
+    if (list.length > maxLen) list.splice(0, list.length - maxLen)
+  }
+
   return {
     agents,
     labelsMap,
     metricsMap,
+    sparkMap,
     loading,
     loaded,
     total,
@@ -125,6 +145,7 @@ export const useAgentStore = defineStore('agent', () => {
     updateStatus,
     patchMetrics,
     removeAgent,
-    setLabels
+    setLabels,
+    pushSpark
   }
 })
