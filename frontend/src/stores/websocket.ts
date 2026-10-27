@@ -43,7 +43,7 @@ export const useWebSocketStore = defineStore('websocket', () => {
     if (state.pending.size === 0) return
     const agentStore = useAgentStore()
     state.pending.forEach((data) => {
-      agentStore.patchMetrics(data.agent_id, {
+      const patch: Record<string, unknown> = {
         cpuUsage: data.cpu_usage,
         memoryPercent: data.memory_percent,
         load1: data.load1,
@@ -51,7 +51,15 @@ export const useWebSocketStore = defineStore('websocket', () => {
         netTxBytes: data.net_tx_bytes,
         lastHeartbeatAt: data.timestamp,
         status: 'online'
-      })
+      }
+      // 可选字段：仅在消息中携带时才覆盖，避免 undefined 抹掉已有值
+      if (data.cpu_steal !== undefined) patch.cpuSteal = data.cpu_steal
+      if (data.swap_percent !== undefined) patch.swapPercent = data.swap_percent
+      if (data.net_rx_total !== undefined) patch.netRxTotal = data.net_rx_total
+      if (data.net_tx_total !== undefined) patch.netTxTotal = data.net_tx_total
+      if (data.uptime !== undefined) patch.uptime = data.uptime
+
+      agentStore.patchMetrics(data.agent_id, patch)
       agentStore.pushSpark(data.agent_id, {
         cpu: data.cpu_usage,
         memory: data.memory_percent,
@@ -69,7 +77,7 @@ export const useWebSocketStore = defineStore('websocket', () => {
 
   function connect(): void {
     const authStore = useAuthStore()
-    if (!authStore.token || state.started) return
+    if (state.started) return
 
     state.started = true
 
@@ -119,6 +127,15 @@ export const useWebSocketStore = defineStore('websocket', () => {
     state.pending.clear()
   }
 
+  /**
+   * 用当前登录态重新连接（登录/退出后升级或降级连接）。
+   * 保留已注册的消息订阅与节流定时器，仅重开底层 socket。
+   */
+  function reconnectWithAuth(): void {
+    const authStore = useAuthStore()
+    wsClient.reconnect(authStore.token)
+  }
+
   const connectionLabel = computed(() => (connected.value ? '实时' : '连接中'))
 
   return {
@@ -127,6 +144,7 @@ export const useWebSocketStore = defineStore('websocket', () => {
     firingAlertCount,
     connect,
     disconnect,
+    reconnectWithAuth,
     flushMetrics
   }
 })

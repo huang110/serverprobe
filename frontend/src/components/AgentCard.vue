@@ -1,21 +1,27 @@
 <script setup lang="ts">
 /**
- * Agent 卡片。
- * - 状态彩色边框：在线绿 / 离线灰 / 告警红色脉动
- * - 实时指标 + sparkline 趋势
- * - 网络上下行动态箭头
- * - 离线时显示最后在线时间
- * - 根据密度与自定义指标偏好调整
+ * Agent 探针卡片（MJJ 晒鸡风格）。
+ * - 头部：发行版徽章 + 备注名/地区/线路/价格标签 + 硬件规格微徽章（1C · 1.9G · 20G）
+ * - 核心指标：CPU（含 Steal 偷跑徽章）、内存 + Swap、实时速率 + 累计总流量 + Uptime
+ * - 状态彩色边框；离线显示最后在线；IP 支持打码
  */
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
 import type { Agent } from '@/types/agent'
 import type { RealtimeMetrics } from '@/types/metrics'
 import type { SparkPoint } from '@/stores/agent'
 import StatusBadge from './StatusBadge.vue'
 import Sparkline from './Sparkline.vue'
 import UsageBar from './UsageBar.vue'
+import DistroBadge from './DistroBadge.vue'
 import { ripple as vRipple } from '@/directives/ripple'
-import { formatRate, formatRelativeTime } from '@/utils/format'
+import {
+  formatBytes,
+  formatMB,
+  formatRate,
+  formatRelativeTime,
+  formatUptime
+} from '@/utils/format'
+import { displayIp } from '@/utils/ip'
 import { usePrefsStore } from '@/stores/prefs'
 
 const props = defineProps<{
@@ -25,70 +31,96 @@ const props = defineProps<{
   compact?: boolean
   /** 搜索关键字，用于在主机名上高亮匹配 */
   highlight?: string
+  /** 资产标签（region / line / price / expire / name 等） */
+  labels?: Record<string, string>
 }>()
 
 const prefsStore = usePrefsStore()
 
-/** 用户自定义卡片指标：某项是否显示（至少保留一项） */
-function showMetric(key: string): boolean {
-  return prefsStore.cardMetrics.includes(key)
-}
-
-/** 网络行上方是否还有其他指标（决定是否显示分隔线） */
-const hasMetricAbove = computed(() =>
-  ['cpu', 'memory', 'load'].some((k) => prefsStore.cardMetrics.includes(k))
-)
-
 const isOnline = computed(() => props.agent.status === 'online')
 const m = computed(() => props.metrics)
+const tags = computed(() => props.labels || {})
 
-const flashing = ref<Record<string, boolean>>({})
+// ---------- 展示信息 ----------
+/** 备注名优先，否则用 hostname */
+const displayName = computed(() => tags.value.name || props.agent.hostname)
 
-watch(
-  () => [m.value?.cpuUsage, m.value?.memoryPercent, m.value?.load1],
-  (next, prev) => {
-    if (!prev || !isOnline.value) return
-    const keys = ['cpu', 'memory', 'load']
-    next.forEach((v, i) => {
-      if (v !== prev[i]) {
-        flashing.value[keys[i]] = false
-        requestAnimationFrame(() => (flashing.value[keys[i]] = true))
-      }
-    })
+const ipText = computed(() => displayIp(props.agent.ip, prefsStore.hideIp))
+
+/** 硬件规格微徽章：1C · 1.9G · 20G + 架构 */
+const specText = computed(() => {
+  const cores = `${props.agent.cpu_cores || '?'}C`
+  const mem = props.agent.memory_total ? compactSize(props.agent.memory_total) : '?G'
+  const disk = props.agent.disk_total ? compactSize(props.agent.disk_total) : '?G'
+  return `${cores} · ${mem} · ${disk}`
+})
+
+/** 规格用紧凑容量：取 formatMB 的数字+单位（1.9 GB -> 1.9G） */
+function compactSize(mb: number): string {
+  const text = formatMB(mb, mb >= 10240 ? 0 : 1)
+  return text.replace(' ', '').replace(/B$/, '')
+}
+
+/** 到期剩余天数 */
+const expireDays = computed<number | null>(() => {
+  const raw = tags.value.expire
+  if (!raw) return null
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) return null
+  return Math.ceil((date.getTime() - Date.now()) / 86400000)
+})
+
+// ---------- 指标 ----------
+const cpuSpark = computed(() => props.spark?.map((p) => p.cpu) || [])
+const memSpark = computed(() => props.spark?.map((p) => p.memory) || [])
+
+const stealValue = computed(() => m.value?.cpuSteal ?? 0)
+const showSteal = computed(() => isOnline.value && stealValue.value >= 5)
+
+const swapText = computed(() => {
+  if (!m.value || !m.value.swapTotal) return 'Swap: OFF'
+  return `Swap: ${(m.value.swapPercent ?? 0).toFixed(0)}%`
+})
+
+const totalTraffic = computed(() => {
+  if (!m.value) return { down: '--', up: '--' }
+  return {
+    down: formatBytes(m.value.netRxTotal),
+    up: formatBytes(m.value.netTxTotal)
   }
-)
+})
 
 // 状态边框
 const borderClass = computed(() => {
   if (!isOnline.value) return 'border-line'
-  // 高负载视为告警态：红色脉动边框
   if ((m.value?.cpuUsage ?? 0) >= 90 || (m.value?.memoryPercent ?? 0) >= 90) {
     return 'border-danger animate-pulse-border'
   }
   return 'border-success/50'
 })
 
-const cpuSpark = computed(() => props.spark?.map((p) => p.cpu) || [])
-const memSpark = computed(() => props.spark?.map((p) => p.memory) || [])
-
 const lastSeenText = computed(() =>
   isOnline.value ? '' : formatRelativeTime(props.agent.last_heartbeat_at)
 )
 
-const loadRatio = computed(() =>
-  m.value ? m.value.load1 / Math.max(1, props.agent.cpu_cores) : 0
-)
-const overload = computed(() => loadRatio.value > 1)
-
 // 主机名搜索高亮
-const safeHostname = computed(() => {
+const safeName = computed(() => {
   const kw = props.highlight?.trim()
   if (!kw) return ''
   const safe = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return props.agent.hostname.replace(
+  return displayName.value.replace(
     new RegExp(`(${safe})`, 'ig'),
     '<mark class="rounded bg-warning/30 px-0.5 text-content">$1</mark>'
   )
+})
+
+// 地区/线路/价格标签
+const chips = computed(() => {
+  const list: { text: string; cls: string }[] = []
+  if (tags.value.region) list.push({ text: tags.value.region, cls: 'text-accent bg-accent/10' })
+  if (tags.value.line) list.push({ text: tags.value.line, cls: 'text-info bg-info/10' })
+  if (tags.value.price) list.push({ text: tags.value.price, cls: 'text-success bg-success/10' })
+  return list
 })
 </script>
 
@@ -100,64 +132,92 @@ const safeHostname = computed(() => {
     :class="borderClass"
     :style="{ padding: 'var(--density-y) var(--density-x)' }"
   >
-    <!-- 在线状态顶部渐变光条 -->
+    <!-- 顶部渐变光条 -->
     <span
-      class="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-transparent via-accent/70 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100"
-      :class="isOnline && 'via-success/70'"
+      class="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-transparent via-success/70 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100"
     ></span>
 
     <!-- 标题行 -->
-    <div class="mb-3 flex items-start justify-between gap-2">
+    <div class="mb-2 flex items-start justify-between gap-2">
       <div class="min-w-0">
-        <h3
-          class="truncate text-sm font-bold text-content group-hover:text-accent"
-          v-html="highlight ? safeHostname : agent.hostname"
-        ></h3>
-        <p class="mt-0.5 truncate font-mono text-xs text-muted">{{ agent.ip || '-' }}</p>
+        <div class="flex items-center gap-1.5">
+          <h3
+            class="truncate text-sm font-bold text-content group-hover:text-accent"
+            v-html="highlight ? safeName : displayName"
+          ></h3>
+          <DistroBadge :agent="agent" />
+        </div>
+        <p class="mt-0.5 truncate font-mono text-[11px] text-muted">
+          {{ ipText }}
+          <span v-if="labels && labels.name" class="text-muted/70">· {{ agent.hostname }}</span>
+        </p>
       </div>
       <StatusBadge :status="agent.status" :pulse="false" />
     </div>
 
-    <!-- 在线：指标 -->
+    <!-- 资产标签：地区 / 线路 / 价格 -->
+    <div v-if="chips.length || expireDays !== null" class="mb-2 flex flex-wrap items-center gap-1">
+      <span
+        v-for="chip in chips"
+        :key="chip.text"
+        class="rounded px-1.5 py-0.5 text-[10px] font-medium leading-none"
+        :class="chip.cls"
+      >{{ chip.text }}</span>
+      <span
+        v-if="expireDays !== null"
+        class="rounded px-1.5 py-0.5 text-[10px] font-medium leading-none"
+        :class="expireDays < 0
+          ? 'bg-danger/15 text-danger'
+          : expireDays <= 30
+            ? 'bg-warning/15 text-warning'
+            : 'bg-surface-2 text-muted'"
+        :title="'到期日 ' + (labels?.expire || '')"
+      >{{ expireDays < 0 ? `已过期 ${-expireDays}天` : `剩 ${expireDays}天` }}</span>
+    </div>
+
+    <!-- 硬件规格微徽章 -->
+    <div class="mb-2.5 flex items-center gap-1.5">
+      <span class="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-content/80">
+        {{ specText }}
+      </span>
+      <span class="font-mono text-[10px] text-muted">{{ agent.arch || '' }}</span>
+    </div>
+
+    <!-- 在线：核心指标 -->
     <template v-if="isOnline">
       <!-- CPU -->
-      <div v-if="showMetric('cpu')" class="mb-2.5">
+      <div class="mb-2.5">
         <div class="flex items-center justify-between text-xs">
-          <span class="text-muted">CPU</span>
+          <span class="flex items-center gap-1.5 text-muted">
+            CPU
+            <span
+              v-if="showSteal"
+              class="rounded bg-warning/20 px-1 py-px text-[9px] font-bold leading-tight text-warning"
+              title="邻居偷跑 Steal（疑似超售）"
+            >偷跑 Steal {{ stealValue.toFixed(0) }}%</span>
+          </span>
           <span class="flex items-center gap-2">
-            <Sparkline v-if="cpuSpark.length > 1" :data="cpuSpark" :max="100" :width="compact ? 70 : 84" :height="22" color="rgb(var(--success))" />
-            <span class="w-12 text-right font-mono font-medium" :class="flashing.cpu && 'animate-flash rounded'">{{ m ? m.cpuUsage.toFixed(1) + '%' : '--' }}</span>
+            <Sparkline v-if="cpuSpark.length > 1" :data="cpuSpark" :max="100" :width="compact ? 60 : 72" :height="20" color="rgb(var(--success))" />
+            <span class="w-12 text-right font-mono font-medium">{{ m ? m.cpuUsage.toFixed(1) + '%' : '--' }}</span>
           </span>
         </div>
         <UsageBar :value="m?.cpuUsage ?? 0" class="mt-1.5" />
       </div>
 
-      <!-- 内存 -->
-      <div v-if="showMetric('memory')" class="mb-2.5">
+      <!-- 内存 + Swap -->
+      <div class="mb-2.5">
         <div class="flex items-center justify-between text-xs">
-          <span class="text-muted">内存</span>
+          <span class="text-muted">内存 <span class="text-[10px] text-muted/80">{{ swapText }}</span></span>
           <span class="flex items-center gap-2">
-            <Sparkline v-if="memSpark.length > 1" :data="memSpark" :max="100" :width="compact ? 70 : 84" :height="22" color="rgb(var(--info))" />
-            <span class="w-12 text-right font-mono font-medium" :class="flashing.memory && 'animate-flash rounded'">{{ m ? m.memoryPercent.toFixed(1) + '%' : '--' }}</span>
+            <Sparkline v-if="memSpark.length > 1" :data="memSpark" :max="100" :width="compact ? 60 : 72" :height="20" color="rgb(var(--info))" />
+            <span class="w-12 text-right font-mono font-medium">{{ m ? m.memoryPercent.toFixed(1) + '%' : '--' }}</span>
           </span>
         </div>
         <UsageBar :value="m?.memoryPercent ?? 0" class="mt-1.5" />
       </div>
 
-      <!-- 负载 -->
-      <div v-if="showMetric('load')" class="mb-2.5 flex items-center justify-between text-xs">
-        <span class="text-muted">负载 (load1)</span>
-        <span class="font-mono font-medium" :class="[flashing.load && 'animate-flash rounded', overload ? 'text-warning' : 'text-content']">
-          {{ m ? m.load1.toFixed(2) : '--' }}
-        </span>
-      </div>
-
-      <!-- 上下行 -->
-      <div
-        v-if="showMetric('network')"
-        class="flex items-center justify-between gap-2 pt-2.5 text-xs"
-        :class="hasMetricAbove && 'border-t border-line/60'"
-      >
+      <!-- 实时速率 -->
+      <div class="flex items-center justify-between gap-2 border-t border-line/60 pt-2.5 text-xs">
         <span class="flex items-center gap-1.5">
           <svg class="h-3 w-3 animate-arrow-down text-success" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
             <path d="M6 10 L1 4h3V1h4v3h3z" />
@@ -165,17 +225,23 @@ const safeHostname = computed(() => {
           <span class="font-mono text-success">{{ m ? formatRate(m.netRxBytes) : '--' }}</span>
         </span>
         <span class="flex items-center gap-1.5">
+          <span class="font-mono text-info">{{ m ? formatRate(m.netTxBytes) : '--' }}</span>
           <svg class="h-3 w-3 animate-arrow-up text-info" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
             <path d="M6 2 L1 8h3v3h4V8h3z" />
           </svg>
-          <span class="font-mono text-info">{{ m ? formatRate(m.netTxBytes) : '--' }}</span>
         </span>
       </div>
 
-      <!-- 所有指标均被关闭 -->
-      <p v-if="prefsStore.cardMetrics.length === 0" class="py-3 text-center text-xs text-muted">
-        已在偏好设置中隐藏全部指标
-      </p>
+      <!-- 累计总流量 + Uptime -->
+      <div class="mt-2 flex items-center justify-between gap-2 text-[10px]">
+        <span class="truncate font-mono text-muted" title="累计已用总流量">
+          总 ↓ <span class="text-content/80">{{ totalTraffic.down }}</span>
+          · ↑ <span class="text-content/80">{{ totalTraffic.up }}</span>
+        </span>
+        <span class="shrink-0 font-mono text-muted" title="系统在线时长">
+          Uptime {{ m && m.uptime ? formatUptime(m.uptime) : '--' }}
+        </span>
+      </div>
     </template>
 
     <!-- 离线：最后在线时间 -->

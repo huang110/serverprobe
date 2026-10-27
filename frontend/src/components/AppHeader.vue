@@ -3,7 +3,7 @@
  * 顶部导航栏：品牌 Logo、页面菜单、主题切换、偏好设置、退出。
  * 小屏幕下菜单与设置收纳。
  */
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useWebSocketStore } from '@/stores/websocket'
@@ -19,11 +19,18 @@ const wsStore = useWebSocketStore()
 const toastStore = useToastStore()
 const prefsStore = usePrefsStore()
 
-const navItems = [
-  { name: 'agent-list', label: 'Agent 列表', to: '/agents', icon: 'M4 6h16M4 12h16M4 18h16' },
+const allNavItems = [
+  { name: 'agent-list', label: '探针列表', to: '/agents', icon: 'M4 6h16M4 12h16M4 18h16' },
   { name: 'alert-rules', label: '告警规则', to: '/alert/rules', icon: 'M12 6v6l4 2' },
   { name: 'alert-records', label: '告警记录', to: '/alert/records', icon: 'M4 6h16M4 12h10M4 18h7' }
 ]
+
+// 游客态仅展示公开的探针列表；登录后展示全部导航
+const navItems = computed(() =>
+  authStore.isAuthenticated
+    ? allNavItems
+    : allNavItems.filter((item) => item.name === 'agent-list')
+)
 
 // ---------- 偏好设置弹层 ----------
 const settingsOpen = ref(false)
@@ -72,9 +79,15 @@ function quickToggleTheme() {
 }
 
 function handleLogout() {
-  wsStore.disconnect()
   authStore.logout()
+  // 退出后降级为游客连接（公开大屏仍可看实时数据），不断开
+  wsStore.reconnectWithAuth()
   toastStore.success('已退出登录')
+  router.push('/agents')
+}
+
+/** 游客点击「管理员登录」 */
+function goLogin() {
   router.push('/login')
 }
 </script>
@@ -223,14 +236,28 @@ function handleLogout() {
           </Transition>
         </div>
 
-        <!-- 退出 -->
+        <!-- 游客：管理员登录入口（高亮） -->
         <button
+          v-if="!authStore.isAuthenticated"
+          class="btn-primary px-3 py-1.5 text-xs"
+          aria-label="管理员登录"
+          @click="goLogin"
+        >
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
+          </svg>
+          <span class="hidden sm:inline">管理员登录</span>
+        </button>
+
+        <!-- 已登录：退出 -->
+        <button
+          v-else
           aria-label="退出登录"
           class="btn-ghost px-3 py-1.5 text-xs"
           @click="handleLogout"
         >
           <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 1.125 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
           </svg>
           <span class="hidden sm:inline">退出</span>
         </button>

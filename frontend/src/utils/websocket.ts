@@ -25,9 +25,8 @@ export class WebSocketClient {
   /** 连接状态变化回调 */
   public onStatusChange: ((connected: boolean) => void) | null = null
 
-  /** 建立连接 */
+  /** 建立连接；token 为空时以游客身份连接 /ws（后端允许匿名订阅） */
   connect(token: string): void {
-    if (!token) return
     this.manuallyClosed = false
     this.url = this.buildUrl(token)
 
@@ -100,6 +99,26 @@ export class WebSocketClient {
     this.onStatusChange?.(false)
   }
 
+  /**
+   * 用新的 token 重新建立连接（登录态切换时使用）。
+   * 先彻底关闭旧连接（含取消重连定时器），再以新 URL 建连。
+   */
+  reconnect(token: string): void {
+    this.manuallyClosed = true
+    this.clearReconnectTimer()
+    this.stopHeartbeat()
+    if (this.ws) {
+      this.ws.onclose = null
+      try {
+        this.ws.close()
+      } catch {
+        // ignore
+      }
+      this.ws = null
+    }
+    this.connect(token)
+  }
+
   private dispatch(raw: string): void {
     let message: { type?: string; data?: unknown }
     try {
@@ -154,8 +173,16 @@ export class WebSocketClient {
 
   private buildUrl(token: string): string {
     const base = import.meta.env.VITE_WS_BASE_URL
+    const root = base ? base.replace(/\/$/, '') : ''
+    // 游客（未登录）：连接 /ws，不带 token
+    if (!token) {
+      if (base) return `${root}/ws`
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      return `${protocol}//${window.location.host}/ws`
+    }
+    // 已登录：/ws?token=xxx
     if (base) {
-      return `${base.replace(/\/$/, '')}/ws?token=${encodeURIComponent(token)}`
+      return `${root}/ws?token=${encodeURIComponent(token)}`
     }
     // 相对地址：生产环境与页面同源；开发环境由 Vite 代理转发到后端
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'

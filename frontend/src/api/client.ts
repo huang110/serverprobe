@@ -27,11 +27,16 @@ apiClient.interceptors.response.use(
     const status = error.response?.status
 
     if (status === 401) {
-      // Token 过期或非法：清理登录态并跳转登录页。
-      // 此处处于 setup 之外，无法使用 useRouter，直接通过 localStorage + 跳转处理。
-      localStorage.removeItem('token')
-      if (!window.location.pathname.startsWith('/login')) {
-        window.location.href = '/login'
+      const path = window.location.pathname
+      // 公开探针页面（/agents、/agents/:id）允许游客访问，401 时不强制踢去登录页
+      const isPublicAgentPage = /^\/agents(\/|$)/.test(path)
+      if (!isPublicAgentPage) {
+        // Token 过期或非法：清理登录态并跳转登录页。
+        // 此处处于 setup 之外，无法使用 useRouter，直接通过 localStorage + 跳转处理。
+        localStorage.removeItem('token')
+        if (path !== '/login') {
+          window.location.href = '/login'
+        }
       }
     }
 

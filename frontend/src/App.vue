@@ -12,7 +12,8 @@ import ToastContainer from '@/components/ToastContainer.vue'
 import { useShortcuts } from '@/composables/useShortcuts'
 
 const route = useRoute()
-const showChrome = computed(() => route.meta.public !== true)
+// 仅登录页隐藏顶栏；探针大屏（游客公开）仍展示顶栏
+const showChrome = computed(() => route.name !== 'login')
 
 useShortcuts()
 </script>

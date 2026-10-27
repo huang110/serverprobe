@@ -89,14 +89,24 @@ export const useAgentStore = defineStore('agent', () => {
     } else {
       metricsMap.value[agentId] = {
         cpuUsage: 0,
+        cpuSteal: 0,
+        cpuIowait: 0,
         memoryUsed: 0,
         memoryPercent: 0,
+        swapTotal: 0,
+        swapUsed: 0,
         swapPercent: 0,
         load1: 0,
         load5: 0,
         load15: 0,
         netRxBytes: 0,
         netTxBytes: 0,
+        netRxTotal: 0,
+        netTxTotal: 0,
+        uptime: 0,
+        processCount: 0,
+        tcpEstablished: 0,
+        tcpTimeWait: 0,
         status: 'online',
         lastHeartbeatAt: 0,
         disks: [],
@@ -116,6 +126,29 @@ export const useAgentStore = defineStore('agent', () => {
   /** 保存标签到本地缓存 */
   function setLabels(agentId: string, labels: AgentLabels): void {
     labelsMap.value[agentId] = labels
+  }
+
+  /**
+   * 批量拉取所有 Agent 的标签（GET /api/agents/:id 返回 labels）。
+   * 标签只在详情接口中提供，列表页为展示 MJJ 地区/线路/价格标签需逐个拉取。
+   * 控制并发数，避免一次性发出大量请求；失败静默跳过。
+   */
+  async function fetchAllLabels(concurrency = 6): Promise<void> {
+    const queue = agents.value.map((a) => a.id)
+    async function worker() {
+      while (queue.length) {
+        const id = queue.shift()!
+        try {
+          const detail = await agentApi.getAgent(id)
+          if (detail.labels) labelsMap.value[id] = detail.labels
+        } catch {
+          // 单个失败不影响整体
+        }
+      }
+    }
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, queue.length) }, () => worker())
+    )
   }
 
   /** 追加一个 sparkline 趋势点（环形缓冲，固定长度） */
@@ -146,6 +179,7 @@ export const useAgentStore = defineStore('agent', () => {
     patchMetrics,
     removeAgent,
     setLabels,
+    fetchAllLabels,
     pushSpark
   }
 })

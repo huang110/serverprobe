@@ -18,8 +18,8 @@ const toastStore = useToastStore()
 const prefsStore = usePrefsStore()
 
 const form = reactive({
-  username: 'admin',
-  password: 'admin123'
+  username: '',
+  password: ''
 })
 const loading = ref(false)
 const errorMsg = ref('')
@@ -45,8 +45,9 @@ async function handleLogin() {
     await authStore.login(form.username.trim(), form.password)
     toastStore.success('登录成功')
 
-    // 登录成功后建立 WebSocket 连接
+    // 登录成功后升级 WebSocket 连接（带 token）
     wsStore.connect()
+    wsStore.reconnectWithAuth()
 
     const redirect = (route.query.redirect as string) || '/agents'
     router.push(redirect)
@@ -105,8 +106,6 @@ async function handleLogin() {
             {{ loading ? '登录中...' : '登 录' }}
           </button>
         </div>
-
-        <p class="mt-5 text-center text-xs text-muted">默认账号 admin / admin123</p>
       </form>
     </div>
   </div>

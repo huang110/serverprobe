@@ -89,6 +89,32 @@ export function formatPercent(value: number): string {
   return `${value.toFixed(1)}%`
 }
 
+/**
+ * 将「MB 为单位」的数值格式化为易读字符串。
+ * 后端约定：Agent.memory_total / disk_total、实时 memory_used / swap_total / swap_used 单位均为 MB。
+ * @param mb 兆字节数
+ * @param decimals 保留小数位
+ */
+export function formatMB(mb: number, decimals = 1): string {
+  if (!Number.isFinite(mb) || mb <= 0) return '0 B'
+  return formatBytes(mb * 1024 * 1024, decimals)
+}
+
+/**
+ * 将「秒」格式化为在线时长：「xx天xx小时」（不足一天显示小时，不足一小时显示分钟）。
+ * @param seconds 运行秒数
+ */
+export function formatUptime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return '-'
+  const days = Math.floor(seconds / 86400)
+  const hours = Math.floor((seconds % 86400) / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  if (days > 0) return `${days}天${hours}小时`
+  if (hours > 0) return `${hours}小时${minutes}分`
+  if (minutes > 0) return `${minutes}分钟`
+  return `${Math.floor(seconds)}秒`
+}
+
 /** 根据使用率返回对应语义颜色 */
 export function usageColor(percent: number): string {
   if (percent >= 90) return '#f43f5e'

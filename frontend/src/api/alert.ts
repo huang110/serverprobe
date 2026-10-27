@@ -25,6 +25,22 @@ export async function createRule(payload: CreateRulePayload): Promise<AlertRule>
   return data.data as AlertRule
 }
 
+/** PUT /api/alert/rules/:id 更新告警规则（含 enabled 启停切换） */
+export async function updateRule(
+  id: number,
+  payload: CreateRulePayload
+): Promise<AlertRule> {
+  const { data } = await apiClient.put(`/api/alert/rules/${id}`, payload)
+  if (!data?.success) throw new Error(data?.message || '更新告警规则失败')
+  return data.data as AlertRule
+}
+
+/** DELETE /api/alert/rules/:id 删除告警规则 */
+export async function deleteRule(id: number): Promise<void> {
+  const { data } = await apiClient.delete(`/api/alert/rules/${id}`)
+  if (!data?.success) throw new Error(data?.message || '删除告警规则失败')
+}
+
 export interface ListRecordsParams {
   agent_id?: string
   severity?: string

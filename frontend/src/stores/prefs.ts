@@ -20,6 +20,8 @@ interface PersistedPrefs {
   refreshInterval: number
   cardMetrics: string[]
   viewMode: ViewMode
+  /** 是否在界面上打码隐藏 IP（晒机截图用） */
+  hideIp: boolean
 }
 
 const DEFAULTS: PersistedPrefs = {
@@ -28,7 +30,8 @@ const DEFAULTS: PersistedPrefs = {
   density: 'comfortable',
   refreshInterval: 5,
   cardMetrics: ['cpu', 'memory', 'load', 'network'],
-  viewMode: 'grid'
+  viewMode: 'grid',
+  hideIp: false
 }
 
 function loadPrefs(): PersistedPrefs {
@@ -59,6 +62,7 @@ export const usePrefsStore = defineStore('prefs', () => {
   const refreshInterval = ref<number>(initial.refreshInterval)
   const cardMetrics = ref<string[]>(initial.cardMetrics)
   const viewMode = ref<ViewMode>(initial.viewMode)
+  const hideIp = ref<boolean>(initial.hideIp)
 
   /** 当前实际生效的主题（auto 解析后） */
   const resolvedTheme = computed<'dark' | 'light'>(() => resolveTheme(theme.value))
@@ -79,14 +83,15 @@ export const usePrefsStore = defineStore('prefs', () => {
       density: density.value,
       refreshInterval: refreshInterval.value,
       cardMetrics: cardMetrics.value,
-      viewMode: viewMode.value
+      viewMode: viewMode.value,
+      hideIp: hideIp.value
     }
     localStorage.setItem(PREFS_KEY, JSON.stringify(payload))
   }
 
   // 任意偏好变化：同步 DOM + 持久化
   watch(
-    [theme, contrast, density, refreshInterval, cardMetrics, viewMode],
+    [theme, contrast, density, refreshInterval, cardMetrics, viewMode, hideIp],
     () => {
       applyToDocument()
       persist()
@@ -116,6 +121,7 @@ export const usePrefsStore = defineStore('prefs', () => {
     refreshInterval,
     cardMetrics,
     viewMode,
+    hideIp,
     resolvedTheme,
     isDark,
     applyToDocument,

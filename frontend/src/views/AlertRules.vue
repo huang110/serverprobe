@@ -1,15 +1,17 @@
 <script setup lang="ts">
 /**
  * 告警规则管理页。
- * 说明：当前后端仅提供规则的「查询」与「创建」接口（无更新/删除），
- *      因此表格中的编辑/删除按钮会提示接口暂未开放。
+ * - 创建规则（弹窗表单）
+ * - 编辑规则（复用表单，回填数据，PUT 提交）
+ * - 状态列点击直接启用/停用（PUT）
+ * - 删除规则（确认弹窗，DELETE）
  */
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import BaseModal from '@/components/BaseModal.vue'
 import LoadingSpinner from '@/components/LoadingSpinner.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SeverityBadge from '@/components/SeverityBadge.vue'
-import { createRule, listRules } from '@/api/alert'
+import { createRule, deleteRule, listRules, updateRule } from '@/api/alert'
 import { listAllAgents } from '@/api/agent'
 import { useToastStore } from '@/stores/toast'
 import { formatDateTime, formatSeconds } from '@/utils/format'
@@ -23,6 +25,11 @@ const agents = ref<Agent[]>([])
 const loading = ref(false)
 const modalVisible = ref(false)
 const submitting = ref(false)
+const deletingId = ref<number | null>(null)
+const deleteConfirmVisible = ref(false)
+const pendingDeleteRule = ref<AlertRule | null>(null)
+/** 正在切换启停状态的规则 id */
+const togglingId = ref<number | null>(null)
 
 // 指标与条件选项
 const metricOptions = [
@@ -55,6 +62,24 @@ const form = reactive({
   enabled: true
 })
 
+/** 当前编辑的规则 id；null 表示创建模式 */
+const editingId = ref<number | null>(null)
+const modalTitle = () => (editingId.value === null ? '创建告警规则' : '编辑告警规则')
+
+function resetForm() {
+  Object.assign(form, {
+    name: '',
+    agent_id: '',
+    metric: 'cpu_usage',
+    condition: 'gt',
+    threshold: 80,
+    duration: 300,
+    severity: 'warning',
+    webhook_url: '',
+    enabled: true
+  })
+}
+
 async function loadRules() {
   loading.value = true
   try {
@@ -67,16 +92,23 @@ async function loadRules() {
 }
 
 function openCreate() {
+  editingId.value = null
+  resetForm()
+  modalVisible.value = true
+}
+
+function openEdit(rule: AlertRule) {
+  editingId.value = rule.id
   Object.assign(form, {
-    name: '',
-    agent_id: '',
-    metric: 'cpu_usage',
-    condition: 'gt',
-    threshold: 80,
-    duration: 300,
-    severity: 'warning',
-    webhook_url: '',
-    enabled: true
+    name: rule.name,
+    agent_id: rule.agent_id || '',
+    metric: rule.metric,
+    condition: rule.condition,
+    threshold: rule.threshold,
+    duration: rule.duration,
+    severity: rule.severity,
+    webhook_url: rule.webhook_url || '',
+    enabled: rule.enabled
   })
   modalVisible.value = true
 }
@@ -94,6 +126,20 @@ function agentName(agentId: string): string {
   return agents.value.find((a) => a.id === agentId)?.hostname || agentId.slice(0, 8)
 }
 
+function buildPayload() {
+  return {
+    name: form.name.trim(),
+    agent_id: form.agent_id,
+    metric: form.metric,
+    condition: form.condition,
+    threshold: Number(form.threshold),
+    duration: Number(form.duration),
+    severity: form.severity,
+    webhook_url: form.webhook_url.trim(),
+    enabled: form.enabled
+  }
+}
+
 async function handleSubmit() {
   if (!form.name.trim()) {
     toastStore.warning('请填写规则名称')
@@ -101,34 +147,84 @@ async function handleSubmit() {
   }
   submitting.value = true
   try {
-    const created = await createRule({
-      name: form.name.trim(),
-      agent_id: form.agent_id,
-      metric: form.metric,
-      condition: form.condition,
-      threshold: Number(form.threshold),
-      duration: Number(form.duration),
-      severity: form.severity,
-      webhook_url: form.webhook_url.trim(),
-      enabled: form.enabled
-    })
-    rules.value.unshift(created)
+    if (editingId.value === null) {
+      const created = await createRule(buildPayload())
+      rules.value.unshift(created)
+      toastStore.success('告警规则已创建')
+    } else {
+      const updated = await updateRule(editingId.value, buildPayload())
+      const idx = rules.value.findIndex((r) => r.id === editingId.value)
+      if (idx >= 0) rules.value[idx] = updated
+      toastStore.success('告警规则已更新')
+    }
     modalVisible.value = false
-    toastStore.success('告警规则已创建')
   } catch (err) {
-    toastStore.danger('创建失败', err instanceof Error ? err.message : '')
+    toastStore.danger(
+      editingId.value === null ? '创建失败' : '更新失败',
+      err instanceof Error ? err.message : ''
+    )
   } finally {
     submitting.value = false
   }
 }
 
-function notSupported(action: string) {
-  toastStore.info(`暂不支持${action}`, '当前后端未开放规则的更新/删除接口')
+/** 点击状态列：切换启用/停用 */
+async function toggleEnabled(rule: AlertRule) {
+  if (togglingId.value !== null) return
+  togglingId.value = rule.id
+  const nextEnabled = !rule.enabled
+  try {
+    const updated = await updateRule(rule.id, {
+      name: rule.name,
+      agent_id: rule.agent_id || '',
+      metric: rule.metric,
+      condition: rule.condition,
+      threshold: rule.threshold,
+      duration: rule.duration,
+      severity: rule.severity,
+      webhook_url: rule.webhook_url || '',
+      enabled: nextEnabled
+    })
+    const idx = rules.value.findIndex((r) => r.id === rule.id)
+    if (idx >= 0) rules.value[idx] = updated
+    toastStore.success(nextEnabled ? '规则已启用' : '规则已停用')
+  } catch (err) {
+    toastStore.danger('状态切换失败', err instanceof Error ? err.message : '')
+  } finally {
+    togglingId.value = null
+  }
+}
+
+function askDelete(rule: AlertRule) {
+  pendingDeleteRule.value = rule
+  deleteConfirmVisible.value = true
+}
+
+async function confirmDelete() {
+  const rule = pendingDeleteRule.value
+  if (!rule) return
+  deletingId.value = rule.id
+  try {
+    await deleteRule(rule.id)
+    rules.value = rules.value.filter((r) => r.id !== rule.id)
+    deleteConfirmVisible.value = false
+    toastStore.success('告警规则已删除')
+  } catch (err) {
+    toastStore.danger('删除失败', err instanceof Error ? err.message : '')
+  } finally {
+    deletingId.value = null
+    pendingDeleteRule.value = null
+  }
 }
 
 onMounted(async () => {
   window.addEventListener('app:refresh', loadRules)
-  await Promise.all([loadRules(), listAllAgents().then((list) => (agents.value = list)).catch(() => {})])
+  await Promise.all([
+    loadRules(),
+    listAllAgents()
+      .then((list) => (agents.value = list))
+      .catch(() => {})
+  ])
 })
 
 onBeforeUnmount(() => window.removeEventListener('app:refresh', loadRules))
@@ -196,19 +292,31 @@ onBeforeUnmount(() => window.removeEventListener('app:refresh', loadRules))
               <td data-label="持续时间" class="whitespace-nowrap">{{ formatSeconds(rule.duration) }}</td>
               <td data-label="严重级别"><SeverityBadge :severity="rule.severity" /></td>
               <td data-label="状态">
-                <span
-                  class="inline-flex items-center gap-1 text-xs"
-                  :class="rule.enabled ? 'text-success' : 'text-muted'"
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1 rounded px-1 py-0.5 text-xs transition hover:bg-surface-3"
+                  :aria-label="rule.enabled ? '点击停用该规则' : '点击启用该规则'"
+                  :disabled="togglingId === rule.id"
+                  @click="toggleEnabled(rule)"
                 >
-                  <span class="h-1.5 w-1.5 rounded-full" :class="rule.enabled ? 'bg-success' : 'bg-muted'"></span>
-                  {{ rule.enabled ? '启用' : '停用' }}
-                </span>
+                  <span
+                    class="h-1.5 w-1.5 rounded-full"
+                    :class="[
+                      togglingId === rule.id
+                        ? 'animate-pulse bg-warning'
+                        : rule.enabled
+                          ? 'bg-success'
+                          : 'bg-muted'
+                    ]"
+                  ></span>
+                  {{ togglingId === rule.id ? '...' : rule.enabled ? '启用' : '停用' }}
+                </button>
               </td>
               <td data-label="创建时间" class="whitespace-nowrap text-xs text-muted">{{ formatDateTime(rule.created_at) }}</td>
               <td data-label="操作">
                 <div class="flex justify-end gap-1.5">
-                  <button aria-label="编辑规则" class="rounded-md px-2 py-1 text-xs text-muted transition hover:bg-surface-3 hover:text-accent" @click="notSupported('编辑规则')">编辑</button>
-                  <button aria-label="删除规则" class="rounded-md px-2 py-1 text-xs text-muted transition hover:bg-surface-3 hover:text-danger" @click="notSupported('删除规则')">删除</button>
+                  <button aria-label="编辑规则" class="rounded-md px-2 py-1 text-xs text-muted transition hover:bg-surface-3 hover:text-accent" @click="openEdit(rule)">编辑</button>
+                  <button aria-label="删除规则" class="rounded-md px-2 py-1 text-xs text-muted transition hover:bg-surface-3 hover:text-danger" @click="askDelete(rule)">删除</button>
                 </div>
               </td>
             </tr>
@@ -217,8 +325,8 @@ onBeforeUnmount(() => window.removeEventListener('app:refresh', loadRules))
       </div>
     </div>
 
-    <!-- 创建规则弹窗 -->
-    <BaseModal :show="modalVisible" title="创建告警规则" @close="modalVisible = false">
+    <!-- 创建 / 编辑规则弹窗 -->
+    <BaseModal :show="modalVisible" :title="modalTitle()" @close="modalVisible = false">
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div class="sm:col-span-2">
           <label class="form-label">规则名称 *</label>
@@ -291,7 +399,22 @@ onBeforeUnmount(() => window.removeEventListener('app:refresh', loadRules))
       <template #footer>
         <button class="btn-ghost" @click="modalVisible = false">取消</button>
         <button class="btn-primary" :disabled="submitting" @click="handleSubmit">
-          {{ submitting ? '创建中...' : '创建' }}
+          {{ submitting ? (editingId === null ? '创建中...' : '保存中...') : editingId === null ? '创建' : '保存' }}
+        </button>
+      </template>
+    </BaseModal>
+
+    <!-- 删除确认弹窗 -->
+    <BaseModal :show="deleteConfirmVisible" title="删除确认" width="420px" @close="deleteConfirmVisible = false">
+      <p class="text-sm leading-relaxed text-muted">
+        确定要删除告警规则
+        <span class="font-semibold text-content">{{ pendingDeleteRule?.name }}</span>
+        吗？删除后该规则将不再触发，且不可恢复。
+      </p>
+      <template #footer>
+        <button class="btn-ghost" @click="deleteConfirmVisible = false">取消</button>
+        <button class="btn-danger" :disabled="deletingId !== null" @click="confirmDelete">
+          {{ deletingId !== null ? '删除中...' : '确认删除' }}
         </button>
       </template>
     </BaseModal>

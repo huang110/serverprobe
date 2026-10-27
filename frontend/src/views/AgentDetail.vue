@@ -21,8 +21,10 @@ import { getHistoryMetrics, getRealtimeMetrics } from '@/api/metrics'
 import { buildLineOption } from '@/utils/charts'
 import {
   formatBytes,
+  formatMB,
   formatRate,
-  formatRelativeTime
+  formatRelativeTime,
+  formatUptime
 } from '@/utils/format'
 import type { Agent, AgentLabels } from '@/types/agent'
 import type {
@@ -31,6 +33,7 @@ import type {
   RealtimeMetrics
 } from '@/types/metrics'
 import { useAgentStore } from '@/stores/agent'
+import { useAuthStore } from '@/stores/auth'
 import { useToastStore } from '@/stores/toast'
 import { useWebSocketStore } from '@/stores/websocket'
 
@@ -38,7 +41,11 @@ const route = useRoute()
 const router = useRouter()
 const toastStore = useToastStore()
 const agentStore = useAgentStore()
+const authStore = useAuthStore()
 const wsStore = useWebSocketStore()
+
+/** 游客（未登录）：隐藏编辑标签 / 删除等管理操作 */
+const isGuest = computed(() => !authStore.isAuthenticated)
 
 const agentId = route.params.id as string
 
@@ -226,6 +233,41 @@ function removeLabelRow(index: number) {
   labelDraft.value.splice(index, 1)
 }
 
+// ---------- MJJ 预设快捷项 ----------
+const labelPresets: { key: string; label: string; placeholder: string }[] = [
+  { key: 'name', label: '别名', placeholder: '如：香港小机' },
+  { key: 'region', label: '地区', placeholder: '如：🇭🇰 香港' },
+  { key: 'line', label: '线路', placeholder: '如：CN2 GIA / CMIN2 / 软银' },
+  { key: 'ISP', label: 'ISP', placeholder: '如：Hinet / CMI' },
+  { key: 'price', label: '价格', placeholder: '如：$10.99/yr' },
+  { key: 'expire', label: '到期日', placeholder: '如：2027-05-01' }
+]
+
+/** 一键填入/定位某个预设 key：已存在则聚焦，否则追加一行 */
+function applyPreset(preset: { key: string }) {
+  const existing = labelDraft.value.find((item) => item.key.trim() === preset.key)
+  if (existing) {
+    // 已存在：无需重复添加
+    return
+  }
+  // 找一行空 key 的行复用，否则新增
+  const empty = labelDraft.value.find((item) => !item.key.trim() && !item.value.trim())
+  if (empty) {
+    empty.key = preset.key
+  } else {
+    labelDraft.value.push({ key: preset.key, value: '' })
+  }
+}
+
+/** 弹窗中 expire 标签对应的剩余天数 */
+const draftExpireDays = computed<number | null>(() => {
+  const item = labelDraft.value.find((i) => i.key.trim() === 'expire')
+  if (!item || !item.value.trim()) return null
+  const date = new Date(item.value.trim())
+  if (Number.isNaN(date.getTime())) return null
+  return Math.ceil((date.getTime() - Date.now()) / 86400000)
+})
+
 async function saveLabels() {
   const next: AgentLabels = {}
   for (const item of labelDraft.value) {
@@ -295,6 +337,11 @@ onMounted(async () => {
       realtime.value.netRxBytes = data.net_rx_bytes
       realtime.value.netTxBytes = data.net_tx_bytes
       realtime.value.lastHeartbeatAt = data.timestamp
+      if (data.cpu_steal !== undefined) realtime.value.cpuSteal = data.cpu_steal
+      if (data.swap_percent !== undefined) realtime.value.swapPercent = data.swap_percent
+      if (data.net_rx_total !== undefined) realtime.value.netRxTotal = data.net_rx_total
+      if (data.net_tx_total !== undefined) realtime.value.netTxTotal = data.net_tx_total
+      if (data.uptime !== undefined) realtime.value.uptime = data.uptime
     })
   } catch (err) {
     toastStore.danger('加载 Agent 详情失败', err instanceof Error ? err.message : '')
@@ -316,6 +363,51 @@ onBeforeUnmount(() => {
 
 const labelEntries = computed(() => Object.entries(labels.value))
 const hasRealtime = computed(() => !!realtime.value)
+
+// ---------- 顶部主机信息：扩展指标 ----------
+const uptimeText = computed(() =>
+  realtime.value?.uptime ? formatUptime(realtime.value.uptime) : '-'
+)
+
+const totalMemText = computed(() =>
+  agent.value?.memory_total ? formatMB(agent.value.memory_total) : '-'
+)
+const totalDiskText = computed(() =>
+  agent.value?.disk_total ? formatMB(agent.value.disk_total) : '-'
+)
+
+/** 内存用量（MB） */
+const memoryUsedText = computed(() =>
+  realtime.value ? formatMB(realtime.value.memoryUsed) : '-'
+)
+
+const swapSummary = computed(() => {
+  if (!realtime.value || !realtime.value.swapTotal) return 'OFF'
+  return `${formatMB(realtime.value.swapUsed)} / ${formatMB(realtime.value.swapTotal)} (${realtime.value.swapPercent.toFixed(0)}%)`
+})
+
+const tcpSummary = computed(() => {
+  if (!realtime.value) return '-'
+  const est = realtime.value.tcpEstablished
+  const tw = realtime.value.tcpTimeWait
+  if (!est && !tw) return '-'
+  return `${est} / ${tw}`
+})
+
+const stealText = computed(() =>
+  realtime.value ? `${realtime.value.cpuSteal.toFixed(1)}%` : '-'
+)
+const iowaitText = computed(() =>
+  realtime.value ? `${realtime.value.cpuIowait.toFixed(1)}%` : '-'
+)
+
+const totalTrafficText = computed(() => {
+  if (!realtime.value) return { down: '-', up: '-' }
+  return {
+    down: formatBytes(realtime.value.netRxTotal),
+    up: formatBytes(realtime.value.netTxTotal)
+  }
+})
 </script>
 
 <template>
@@ -376,7 +468,15 @@ const hasRealtime = computed(() => !!realtime.value)
             </div>
             <div>
               <p class="text-xs text-muted">总内存</p>
-              <p class="mt-1 text-sm text-content/90">{{ formatBytes(agent.memory_total) }}</p>
+              <p class="mt-1 text-sm text-content/90">{{ totalMemText }}</p>
+            </div>
+            <div>
+              <p class="text-xs text-muted">总磁盘</p>
+              <p class="mt-1 text-sm text-content/90">{{ totalDiskText }}</p>
+            </div>
+            <div>
+              <p class="text-xs text-muted">内核版本</p>
+              <p class="mt-1 font-mono text-sm text-content/90">{{ agent.kernel_version || '-' }}</p>
             </div>
             <div>
               <p class="text-xs text-muted">状态</p>
@@ -386,7 +486,39 @@ const hasRealtime = computed(() => !!realtime.value)
               <p class="text-xs text-muted">最后心跳</p>
               <p class="mt-1 text-sm text-content/90">{{ heartbeatText }}</p>
             </div>
-            <div class="sm:col-span-2 lg:col-span-1">
+            <div>
+              <p class="text-xs text-muted">系统在线时长</p>
+              <p class="mt-1 font-mono text-sm text-success">{{ uptimeText }}</p>
+            </div>
+            <div>
+              <p class="text-xs text-muted">已用内存</p>
+              <p class="mt-1 text-sm text-content/90">
+                {{ memoryUsedText }}<span class="text-muted"> · Swap {{ swapSummary }}</span>
+              </p>
+            </div>
+            <div>
+              <p class="text-xs text-muted">CPU Steal / IO Wait</p>
+              <p class="mt-1 font-mono text-sm">
+                <span :class="(realtime?.cpuSteal ?? 0) >= 5 ? 'text-warning font-semibold' : 'text-content/90'">
+                  {{ stealText }}
+                </span>
+                <span class="text-muted"> / </span>
+                <span class="text-content/90">{{ iowaitText }}</span>
+              </p>
+            </div>
+            <div>
+              <p class="text-xs text-muted">TCP Established / TimeWait</p>
+              <p class="mt-1 font-mono text-sm text-content/90">{{ tcpSummary }}</p>
+            </div>
+            <div>
+              <p class="text-xs text-muted">累计总流量（↓ / ↑）</p>
+              <p class="mt-1 font-mono text-sm">
+                <span class="text-success">{{ totalTrafficText.down }}</span>
+                <span class="text-muted"> / </span>
+                <span class="text-info">{{ totalTrafficText.up }}</span>
+              </p>
+            </div>
+            <div class="sm:col-span-2 lg:col-span-3">
               <p class="text-xs text-muted">标签</p>
               <div class="mt-1 flex flex-wrap gap-1.5">
                 <template v-if="labelEntries.length">
@@ -401,8 +533,8 @@ const hasRealtime = computed(() => !!realtime.value)
             </div>
           </div>
 
-          <!-- 操作按钮：图标 + 文字 -->
-          <div class="flex shrink-0 gap-2">
+          <!-- 操作按钮：仅登录管理员可见 -->
+          <div v-if="!isGuest" class="flex shrink-0 gap-2">
             <button class="btn-ghost px-3 py-1.5 text-xs" aria-label="编辑 Agent 标签" @click="openLabelModal">
               <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
@@ -634,9 +766,40 @@ const hasRealtime = computed(() => !!realtime.value)
 
       <!-- 标签编辑弹窗 -->
       <BaseModal :show="labelModalVisible" title="编辑标签" @close="labelModalVisible = false">
+        <!-- MJJ 预设快捷项 -->
+        <div class="mb-3 rounded-lg border border-line bg-surface-2/60 p-2.5">
+          <p class="mb-2 text-[11px] font-semibold text-muted">小鸡资产标签 · 快捷填入</p>
+          <div class="flex flex-wrap gap-1.5">
+            <button
+              v-for="preset in labelPresets"
+              :key="preset.key"
+              type="button"
+              class="rounded-full border border-line px-2.5 py-1 text-[11px] text-muted transition hover:border-accent hover:text-accent"
+              :title="preset.placeholder"
+              @click="applyPreset(preset)"
+            >{{ preset.label }}</button>
+          </div>
+          <p
+            v-if="draftExpireDays !== null"
+            class="mt-2 text-[11px]"
+            :class="draftExpireDays < 0
+              ? 'text-danger'
+              : draftExpireDays <= 30
+                ? 'text-warning'
+                : 'text-success'"
+          >
+            {{ draftExpireDays < 0
+              ? `已过期 ${-draftExpireDays} 天`
+              : `距离到期还剩 ${draftExpireDays} 天` }}
+          </p>
+        </div>
+
         <div class="space-y-2.5">
+          <datalist id="label-key-suggestions">
+            <option v-for="preset in labelPresets" :key="preset.key" :value="preset.key"></option>
+          </datalist>
           <div v-for="(item, index) in labelDraft" :key="index" class="flex items-center gap-2">
-            <input v-model="item.key" type="text" aria-label="标签键" class="form-input" placeholder="键（如 env）" />
+            <input v-model="item.key" type="text" list="label-key-suggestions" aria-label="标签键" class="form-input" placeholder="键（如 env）" />
             <span class="text-muted">=</span>
             <input v-model="item.value" type="text" aria-label="标签值" class="form-input" placeholder="值（如 prod）" />
             <button

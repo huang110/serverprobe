@@ -19,13 +19,13 @@ const routes: RouteRecordRaw[] = [
     path: '/agents',
     name: 'agent-list',
     component: () => import('@/views/AgentList.vue'),
-    meta: { title: 'Agent 列表' }
+    meta: { public: true, title: '探针列表' }
   },
   {
     path: '/agents/:id',
     name: 'agent-detail',
     component: () => import('@/views/AgentDetail.vue'),
-    meta: { title: 'Agent 详情' }
+    meta: { public: true, title: '探针详情' }
   },
   {
     path: '/alert/rules',

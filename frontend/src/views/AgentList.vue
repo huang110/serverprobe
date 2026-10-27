@@ -1,11 +1,9 @@
 <script setup lang="ts">
 /**
- * Agent 列表页。
- * - 顶部蓝色渐变条 + KPI（在线/总数、实时告警）
- * - 详细 / 紧凑视图切换（滑动指示条）
- * - 防抖搜索 + 高亮匹配
- * - 骨架屏加载、长列表窗口式渲染（IntersectionObserver 无限加载）
- * - WebSocket 实时更新
+ * 探针列表晒鸡大屏（MJJ 风格）。
+ * - 顶部 KPI 条：在线节点、实时总带宽（↑/↓ 汇总）、累计总流量（↓/↑ 汇总）、触发中告警
+ * - 详细 / 紧凑视图、防抖搜索 + 高亮、IP 打码开关
+ * - 骨架屏、IntersectionObserver 分批渲染、WebSocket 实时更新
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
@@ -13,17 +11,17 @@ import AgentCard from '@/components/AgentCard.vue'
 import AgentCardSkeleton from '@/components/AgentCardSkeleton.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SegmentedControl from '@/components/SegmentedControl.vue'
-import StatCard from '@/components/StatCard.vue'
 import { useAgentStore } from '@/stores/agent'
 import { useWebSocketStore } from '@/stores/websocket'
 import { usePrefsStore } from '@/stores/prefs'
+import { formatBytes, formatRate } from '@/utils/format'
 
 const agentStore = useAgentStore()
 const wsStore = useWebSocketStore()
 const prefsStore = usePrefsStore()
-const { agents, metricsMap, sparkMap, loading } = storeToRefs(agentStore)
+const { agents, metricsMap, sparkMap, labelsMap, loading } = storeToRefs(agentStore)
 
-// 搜索：输入即时本地过滤，300ms 防抖后请求后端（重关键字场景）
+// 搜索：300ms 防抖后请求后端，本地即时过滤
 const keyword = ref('')
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -36,11 +34,14 @@ watch(keyword, () => {
 
 const statusFilter = ref<'all' | 'online' | 'offline'>('all')
 
-onMounted(() => wsStore.connect())
+onMounted(() => {
+  wsStore.connect()
+  loadData()
+})
 
 async function loadData() {
   await agentStore.fetchAgents(keyword.value.trim())
-  await agentStore.fetchAllRealtime()
+  await Promise.all([agentStore.fetchAllRealtime(), agentStore.fetchAllLabels()])
 }
 
 // 全局快捷键：R 刷新
@@ -50,13 +51,13 @@ function onRefresh() {
 onMounted(() => window.addEventListener('app:refresh', onRefresh))
 onBeforeUnmount(() => window.removeEventListener('app:refresh', onRefresh))
 
-// 视图切换：grid 详细 / compact 紧凑
+// 视图：详细 / 紧凑
 const view = computed({
   get: () => prefsStore.viewMode,
   set: (v: 'grid' | 'compact') => (prefsStore.viewMode = v)
 })
 
-// 本地过滤（即时响应，无需等待后端）
+// 本地过滤
 const filteredAgents = computed(() => {
   let list = agents.value
   if (statusFilter.value !== 'all') {
@@ -71,7 +72,37 @@ const filteredAgents = computed(() => {
   return list
 })
 
-// 无限渲染：首屏渲染一页，滚动到底部追加
+// ---------- 顶部 KPI 汇总 ----------
+/** 在线机器的实时总带宽（Bytes/s） */
+const totalBandwidth = computed(() => {
+  let down = 0
+  let up = 0
+  agents.value.forEach((a) => {
+    if (a.status !== 'online') return
+    const mt = metricsMap.value[a.id]
+    if (mt) {
+      down += mt.netRxBytes
+      up += mt.netTxBytes
+    }
+  })
+  return { down, up }
+})
+
+/** 累计总流量（Bytes） */
+const totalTraffic = computed(() => {
+  let down = 0
+  let up = 0
+  agents.value.forEach((a) => {
+    const mt = metricsMap.value[a.id]
+    if (mt) {
+      down += mt.netRxTotal
+      up += mt.netTxTotal
+    }
+  })
+  return { down, up }
+})
+
+// ---------- 无限渲染 ----------
 const PAGE_SIZE = 12
 const visibleCount = ref(PAGE_SIZE)
 const sentinelRef = ref<HTMLElement | null>(null)
@@ -89,7 +120,6 @@ onMounted(() => {
   if (sentinelRef.value) observer.observe(sentinelRef.value)
 })
 
-// 过滤变化时重置窗口
 watch([filteredAgents, () => statusFilter.value, keyword], () => {
   visibleCount.value = PAGE_SIZE
   nextTick(() => {
@@ -106,32 +136,52 @@ const hasMore = computed(() => visibleCount.value < filteredAgents.value.length)
 <template>
   <div>
     <!-- 顶部渐变光条 -->
-    <div class="pointer-events-none -mx-4 -mt-6 mb-6 h-px bg-gradient-to-r from-transparent via-accent/70 to-transparent sm:-mx-6"></div>
+    <div class="pointer-events-none -mx-4 -mt-6 mb-5 h-px bg-gradient-to-r from-transparent via-accent/70 to-transparent sm:-mx-6"></div>
 
-    <!-- KPI 区 -->
-    <div class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-      <StatCard
-        label="在线 Agent"
-        :value="agentStore.onlineCount"
-        :sub="`/ ${agentStore.total} 台主机`"
-        tone="success"
-      />
-      <StatCard
-        label="离线 Agent"
-        :value="agentStore.total - agentStore.onlineCount"
-        sub="需要关注"
-        :tone="agentStore.total - agentStore.onlineCount > 0 ? 'warning' : 'accent'"
-        :pulse="agentStore.total - agentStore.onlineCount > 0"
-      />
-      <StatCard
-        label="触发中告警"
-        :value="wsStore.firingAlertCount"
-        sub="实时推送"
-        tone="danger"
-        :pulse="wsStore.firingAlertCount > 0"
-      />
-      <div class="hidden lg:block">
-        <StatCard label="监控主机总数" :value="agentStore.total" sub="全部已注册" tone="accent" />
+    <!-- KPI 汇总条 -->
+    <div class="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <!-- 在线节点 -->
+      <div class="card relative overflow-hidden p-3.5">
+        <div class="pointer-events-none absolute -right-5 -top-5 h-16 w-16 rounded-full bg-success/15 blur-xl"></div>
+        <p class="text-[11px] text-muted">在线节点</p>
+        <p class="mt-1 font-mono text-xl font-bold leading-none text-success">
+          {{ agentStore.onlineCount }}<span class="text-sm font-medium text-muted"> / {{ agentStore.total }}</span>
+        </p>
+      </div>
+
+      <!-- 实时总带宽 -->
+      <div class="card relative overflow-hidden p-3.5">
+        <div class="pointer-events-none absolute -right-5 -top-5 h-16 w-16 rounded-full bg-accent/15 blur-xl"></div>
+        <p class="text-[11px] text-muted">实时总带宽</p>
+        <p class="mt-1 truncate font-mono text-[13px] font-bold leading-tight">
+          <span class="text-success">↓ {{ formatRate(totalBandwidth.down, 1) }}</span>
+        </p>
+        <p class="truncate font-mono text-[13px] font-bold leading-tight">
+          <span class="text-info">↑ {{ formatRate(totalBandwidth.up, 1) }}</span>
+        </p>
+      </div>
+
+      <!-- 累计总流量 -->
+      <div class="card relative overflow-hidden p-3.5">
+        <div class="pointer-events-none absolute -right-5 -top-5 h-16 w-16 rounded-full bg-info/15 blur-xl"></div>
+        <p class="text-[11px] text-muted">累计总流量</p>
+        <p class="mt-1 truncate font-mono text-[13px] font-bold leading-tight">
+          <span class="text-success">↓ {{ formatBytes(totalTraffic.down) }}</span>
+        </p>
+        <p class="truncate font-mono text-[13px] font-bold leading-tight">
+          <span class="text-info">↑ {{ formatBytes(totalTraffic.up) }}</span>
+        </p>
+      </div>
+
+      <!-- 触发中告警 -->
+      <div class="card relative overflow-hidden p-3.5">
+        <div class="pointer-events-none absolute -right-5 -top-5 h-16 w-16 rounded-full bg-danger/15 blur-xl"></div>
+        <p class="text-[11px] text-muted">触发中告警</p>
+        <p class="mt-1 flex items-center gap-1.5 font-mono text-xl font-bold leading-none"
+          :class="wsStore.firingAlertCount > 0 ? 'text-danger' : 'text-content'">
+          <span v-if="wsStore.firingAlertCount > 0" class="h-2 w-2 animate-ping rounded-full bg-danger"></span>
+          {{ wsStore.firingAlertCount }}
+        </p>
       </div>
     </div>
 
@@ -145,7 +195,7 @@ const hasMore = computed(() => visibleCount.value < filteredAgents.value.length)
           v-model="keyword"
           data-shortcut="search"
           type="text"
-          aria-label="搜索 Agent 主机名或 IP"
+          aria-label="搜索探针主机名或 IP"
           class="form-input w-48 py-1.5 pl-8 text-xs"
           placeholder="搜索主机名 / IP（按 / 聚焦）"
         />
@@ -163,6 +213,18 @@ const hasMore = computed(() => visibleCount.value < filteredAgents.value.length)
       />
 
       <div class="ml-auto flex items-center gap-2">
+        <!-- IP 打码开关 -->
+        <button
+          type="button"
+          class="btn-ghost px-2.5 py-1.5 text-xs"
+          :aria-pressed="prefsStore.hideIp"
+          :aria-label="prefsStore.hideIp ? '显示 IP' : '隐藏 IP（截图打码）'"
+          @click="prefsStore.hideIp = !prefsStore.hideIp"
+        >
+          <span aria-hidden="true">{{ prefsStore.hideIp ? '🙈' : '👁️' }}</span>
+          <span class="hidden sm:inline">{{ prefsStore.hideIp ? '已隐藏' : '隐藏IP' }}</span>
+        </button>
+
         <SegmentedControl
           v-model="view"
           size="sm"
@@ -173,7 +235,7 @@ const hasMore = computed(() => visibleCount.value < filteredAgents.value.length)
           ]"
         />
         <button
-          aria-label="刷新 Agent 列表（快捷键 R）"
+          aria-label="刷新探针列表（快捷键 R）"
           class="btn-ghost px-2.5 py-1.5"
           @click="loadData"
         >
@@ -193,7 +255,7 @@ const hasMore = computed(() => visibleCount.value < filteredAgents.value.length)
     <EmptyState
       v-else-if="filteredAgents.length === 0"
       :variant="keyword ? 'search' : 'agent'"
-      :text="keyword ? `没有匹配「${keyword}」的 Agent` : '暂无 Agent'"
+      :text="keyword ? `没有匹配「${keyword}」的探针` : '暂无探针节点'"
       :hint="keyword ? '尝试更换关键字' : '请确认 Agent 已成功注册'"
     />
 
@@ -206,6 +268,7 @@ const hasMore = computed(() => visibleCount.value < filteredAgents.value.length)
           :spark="sparkMap[agent.id]"
           :compact="view === 'compact'"
           :highlight="keyword"
+          :labels="labelsMap[agent.id]"
         />
       </router-link>
     </div>
