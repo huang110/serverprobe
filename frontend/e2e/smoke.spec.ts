@@ -10,11 +10,11 @@ test('login and navigate main pages', async ({ page }) => {
   await page.goto('/login')
 
   await page.locator('input[autocomplete="username"]').fill('admin')
-  await page.locator('input[type="password"]').fill('admin123')
+  await page.locator('input[type="password"]').fill(process.env.E2E_ADMIN_PASSWORD || 'admin123')
   await page.locator('button[type="submit"]').click()
 
   await expect(page).toHaveURL(/\/agents$/)
-  await expect(page.getByText('Agent 列表', { exact: false })).toBeVisible()
+  await expect(page.getByText('探针列表', { exact: false })).toBeVisible()
 
   await page.goto('/alert/rules')
   await expect(page.getByText('告警规则', { exact: false }).first()).toBeVisible()
@@ -25,7 +25,7 @@ test('login and navigate main pages', async ({ page }) => {
 
 test('agent detail loads charts when an agent exists', async ({ page }) => {
   await page.locator('input[autocomplete="username"]').fill('admin')
-  await page.locator('input[type="password"]').fill('admin123')
+  await page.locator('input[type="password"]').fill(process.env.E2E_ADMIN_PASSWORD || 'admin123')
   await page.locator('button[type="submit"]').click()
   await expect(page).toHaveURL(/\/agents$/)
 

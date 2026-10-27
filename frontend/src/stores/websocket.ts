@@ -58,6 +58,7 @@ export const useWebSocketStore = defineStore('websocket', () => {
       if (data.net_rx_total !== undefined) patch.netRxTotal = data.net_rx_total
       if (data.net_tx_total !== undefined) patch.netTxTotal = data.net_tx_total
       if (data.uptime !== undefined) patch.uptime = data.uptime
+      if (data.latency !== undefined) patch.latencies = data.latency
 
       agentStore.patchMetrics(data.agent_id, patch)
       agentStore.pushSpark(data.agent_id, {

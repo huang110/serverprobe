@@ -92,6 +92,10 @@ export class WebSocketClient {
     this.clearReconnectTimer()
     this.stopHeartbeat()
     if (this.ws) {
+      // 置空全部处理器，避免 CONNECTING 阶段被主动关闭时触发无意义的 onerror 日志
+      this.ws.onopen = null
+      this.ws.onmessage = null
+      this.ws.onerror = null
       this.ws.onclose = null
       this.ws.close()
       this.ws = null
@@ -108,6 +112,10 @@ export class WebSocketClient {
     this.clearReconnectTimer()
     this.stopHeartbeat()
     if (this.ws) {
+      // 置空全部处理器，避免 CONNECTING 阶段被主动关闭时触发无意义的 onerror 日志
+      this.ws.onopen = null
+      this.ws.onmessage = null
+      this.ws.onerror = null
       this.ws.onclose = null
       try {
         this.ws.close()

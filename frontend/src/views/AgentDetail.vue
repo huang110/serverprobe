@@ -17,8 +17,8 @@ import EmptyState from '@/components/EmptyState.vue'
 import BaseModal from '@/components/BaseModal.vue'
 import UsageBar from '@/components/UsageBar.vue'
 import { getAgent, updateAgentLabels, deleteAgent } from '@/api/agent'
-import { getHistoryMetrics, getRealtimeMetrics } from '@/api/metrics'
-import { buildLineOption } from '@/utils/charts'
+import { getHistoryMetrics, getLatencyHistory, getRealtimeMetrics } from '@/api/metrics'
+import { buildLatencyOption, buildLineOption } from '@/utils/charts'
 import {
   formatBytes,
   formatMB,
@@ -29,6 +29,8 @@ import {
 import type { Agent, AgentLabels } from '@/types/agent'
 import type {
   HistoryMetric,
+  LatencyLive,
+  LatencySeries,
   MetricPoint,
   RealtimeMetrics
 } from '@/types/metrics'
@@ -62,6 +64,9 @@ const history = reactive<Record<HistoryMetric, MetricPoint[]>>({
   load: [],
   network: []
 })
+
+// 多目标 TCP Ping 历史延迟
+const latencyHistory = ref<LatencySeries[]>([])
 
 // 1 小时前的快照（用于对比）
 const hourAgo = reactive<Record<'cpu' | 'memory' | 'load', number | null>>({
@@ -116,7 +121,7 @@ function valueNear(points: MetricPoint[], targetTs: number): number | null {
   return bestDiff <= 600 ? best.value : null
 }
 
-/** 并行拉取四类历史指标 */
+/** 并行拉取四类历史指标 + 多目标 TCP Ping 延迟 */
 async function loadHistory() {
   if (activeRange.value === 'custom' && (!customStart.value || !customEnd.value)) return
   chartsLoading.value = true
@@ -124,12 +129,20 @@ async function loadHistory() {
 
   const metrics: HistoryMetric[] = ['cpu', 'memory', 'load', 'network']
   try {
-    const results = await Promise.all(
-      metrics.map((metric) => getHistoryMetrics(agentId, { start, end, metric }))
-    )
+    const [results, latencyRes] = await Promise.all([
+      Promise.all(
+        metrics.map((metric) => getHistoryMetrics(agentId, { start, end, metric }))
+      ),
+      getLatencyHistory(agentId, { start, end }).catch((err) => {
+        // 该探针可能暂未上报 TCP Ping，单独容错不影响其余图表
+        console.warn('TCP Ping 历史暂不可用:', err)
+        return null
+      })
+    ])
     results.forEach((res, i) => {
       history[metrics[i]] = res.points || []
     })
+    latencyHistory.value = latencyRes?.series || []
 
     // 计算 1 小时前对比值（仅当范围覆盖 1 小时前）
     const target = end - 3600
@@ -185,6 +198,49 @@ const networkOption = computed<EChartsOption>(() =>
     '网络接收速率',
     [{ name: '下行', color: '#3b82f6', points: history.network }]
   )
+)
+
+// ---------- TCP Ping 延迟监控 ----------
+/** 目标名 -> 线路配色（MJJ 三网标准色，未命中时按序取色） */
+const LATENCY_PALETTE = [
+  { match: /电信|telecom/i, color: '#3b82f6' },
+  { match: /联通|unicom/i, color: '#f59e0b' },
+  { match: /移动|cmcc/i, color: '#22c55e' },
+  { match: /阿里|ali/i, color: '#a855f7' },
+  { match: /cloudflare|cf\b/i, color: '#06b6d4' }
+]
+const FALLBACK_COLORS = ['#ef4444', '#eab308', '#14b8a6', '#ec4899', '#8b5cf6', '#f97316']
+
+function targetColor(name: string, index: number): string {
+  const hit = LATENCY_PALETTE.find((p) => p.match.test(name))
+  if (hit) return hit.color
+  return FALLBACK_COLORS[index % FALLBACK_COLORS.length]
+}
+
+/** 实时延迟状态圆点 / 文本配色（与详情语义一致） */
+function latencyDotClass(l: LatencyLive): string {
+  if (l.packet_loss >= 100) return 'bg-danger animate-ping'
+  if (l.packet_loss > 0 || l.latency_ms >= 300) return 'bg-danger'
+  if (l.latency_ms >= 180) return 'bg-warning'
+  if (l.latency_ms >= 80) return 'bg-info'
+  return 'bg-success'
+}
+
+const liveLatencies = computed<LatencyLive[]>(() => realtime.value?.latencies || [])
+
+const latencyOption = computed<EChartsOption>(() =>
+  buildLatencyOption(
+    '多目标 TCP Ping 延迟',
+    latencyHistory.value.map((s, i) => ({
+      name: s.target_name,
+      color: targetColor(s.target_name, i),
+      points: s.points
+    }))
+  )
+)
+
+const latencyEmpty = computed(
+  () => !latencyHistory.value.some((s) => s.points.length > 0)
 )
 
 // ---------- 最新值 + 1 小时前对比 ----------
@@ -342,6 +398,7 @@ onMounted(async () => {
       if (data.net_rx_total !== undefined) realtime.value.netRxTotal = data.net_rx_total
       if (data.net_tx_total !== undefined) realtime.value.netTxTotal = data.net_tx_total
       if (data.uptime !== undefined) realtime.value.uptime = data.uptime
+      if (data.latency !== undefined) realtime.value.latencies = data.latency
     })
   } catch (err) {
     toastStore.danger('加载 Agent 详情失败', err instanceof Error ? err.message : '')
@@ -684,6 +741,65 @@ const totalTrafficText = computed(() => {
         </div>
         <div class="card p-3">
           <MetricsChart :option="networkOption" height="280px" :empty="!history.network.length" empty-text="该时间范围暂无网络数据" />
+        </div>
+      </div>
+
+      <!-- TCP Ping 延迟监控 -->
+      <div class="card mb-6 overflow-hidden">
+        <div class="border-b border-line px-5 py-3.5">
+          <h3 class="flex items-center gap-2 text-sm font-semibold text-content">
+            <svg class="h-4 w-4 text-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 12h3l3-9 6 21 3-12h4.5" />
+            </svg>
+            TCP Ping 延迟监控
+            <span class="text-xs font-normal text-muted">三网 / 多目标实时延迟与历史曲线</span>
+          </h3>
+        </div>
+
+        <div class="p-5">
+          <!-- 实时目标小卡片网格 -->
+          <div v-if="liveLatencies.length" class="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+            <div
+              v-for="l in liveLatencies"
+              :key="l.target"
+              class="rounded-lg border border-line bg-surface-2/50 p-3 transition hover:border-accent/50"
+            >
+              <div class="flex items-center justify-between gap-2">
+                <span class="truncate text-xs font-semibold text-content">{{ l.target_name }}</span>
+                <span class="relative flex h-2 w-2 shrink-0">
+                  <span class="relative h-2 w-2 rounded-full" :class="latencyDotClass(l)"></span>
+                </span>
+              </div>
+              <p class="mt-1 truncate font-mono text-[10px] text-muted" :title="l.target">{{ l.target }}</p>
+              <p class="mt-2 font-mono text-lg font-bold leading-none text-content">
+                <template v-if="l.packet_loss >= 100">
+                  <span class="text-sm text-danger">超时</span>
+                </template>
+                <template v-else>{{ l.latency_ms.toFixed(0) }}<span class="ml-0.5 text-xs font-normal text-muted">ms</span></template>
+              </p>
+              <div class="mt-2 flex items-center justify-between text-[10px] text-muted">
+                <span :title="'抖动'">抖动 <span class="font-mono text-content/80">{{ l.jitter_ms.toFixed(1) }}</span></span>
+                <span :title="'丢包率'" :class="l.packet_loss > 0 ? 'text-danger font-semibold' : ''">
+                  丢包 <span class="font-mono">{{ l.packet_loss.toFixed(0) }}%</span>
+                </span>
+              </div>
+            </div>
+          </div>
+          <EmptyState
+            v-else
+            variant="chart"
+            text="暂无 TCP Ping 实时数据"
+            hint="该探针可能暂未配置或上报多目标延迟探测"
+          />
+
+          <!-- 多目标历史延迟折线图（独立 testid，不计入 metrics-chart） -->
+          <MetricsChart
+            test-id="latency-chart"
+            :option="latencyOption"
+            height="320px"
+            :empty="latencyEmpty"
+            empty-text="该时间范围暂无 TCP Ping 历史数据"
+          />
         </div>
       </div>
 

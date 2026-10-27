@@ -111,6 +111,7 @@ export const useAgentStore = defineStore('agent', () => {
         lastHeartbeatAt: 0,
         disks: [],
         networks: [],
+        latencies: [],
         ...patch
       }
     }

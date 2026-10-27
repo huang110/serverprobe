@@ -8,13 +8,20 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import type { EChartsOption } from 'echarts'
 
-const props = defineProps<{
-  option: EChartsOption
-  height?: string
-  /** 无数据时显示空状态遮罩（图表容器仍保留，便于占位与测试选择） */
-  empty?: boolean
-  emptyText?: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    option: EChartsOption
+    height?: string
+    /** 无数据时显示空状态遮罩（图表容器仍保留，便于占位与测试选择） */
+    empty?: boolean
+    emptyText?: string
+    /** E2E / 测试用的 data-testid，默认 metrics-chart；TCP Ping 图传 latency-chart */
+    testId?: string
+  }>(),
+  {
+    testId: 'metrics-chart'
+  }
+)
 
 const chartEl = ref<HTMLDivElement>()
 let chart: echarts.ECharts | null = null
@@ -47,7 +54,7 @@ onBeforeUnmount(() => {
   <div class="relative w-full" :style="{ height: height || '300px' }">
     <div
       ref="chartEl"
-      data-testid="metrics-chart"
+      :data-testid="testId"
       class="w-full"
       :class="empty && 'opacity-0'"
       :style="{ height: '100%' }"

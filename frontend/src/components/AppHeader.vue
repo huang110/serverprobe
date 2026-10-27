@@ -58,7 +58,8 @@ const metricOptions = [
   { key: 'cpu', label: 'CPU' },
   { key: 'memory', label: '内存' },
   { key: 'load', label: '负载' },
-  { key: 'network', label: '网络' }
+  { key: 'network', label: '网络' },
+  { key: 'latency', label: 'TCP 延迟' }
 ]
 
 const refreshOptions = [1, 5, 10]

@@ -7,7 +7,7 @@
  */
 import { computed } from 'vue'
 import type { Agent } from '@/types/agent'
-import type { RealtimeMetrics } from '@/types/metrics'
+import type { LatencyLive, RealtimeMetrics } from '@/types/metrics'
 import type { SparkPoint } from '@/stores/agent'
 import StatusBadge from './StatusBadge.vue'
 import Sparkline from './Sparkline.vue'
@@ -73,6 +73,12 @@ const expireDays = computed<number | null>(() => {
 // ---------- 指标 ----------
 const cpuSpark = computed(() => props.spark?.map((p) => p.cpu) || [])
 const memSpark = computed(() => props.spark?.map((p) => p.memory) || [])
+const loadSpark = computed(() => props.spark?.map((p) => p.load) || [])
+
+/** 顶栏齿轮「卡片显示指标」联动 */
+function showMetric(key: string): boolean {
+  return prefsStore.cardMetrics.includes(key)
+}
 
 const stealValue = computed(() => m.value?.cpuSteal ?? 0)
 const showSteal = computed(() => isOnline.value && stealValue.value >= 5)
@@ -89,6 +95,29 @@ const totalTraffic = computed(() => {
     up: formatBytes(m.value.netTxTotal)
   }
 })
+
+// ---------- TCP Ping 延迟胶囊条 ----------
+/** 按 MJJ 标准返回胶囊配色类 */
+function latencyClass(l: LatencyLive): string {
+  if (l.packet_loss >= 100) {
+    return 'bg-danger/20 text-danger animate-pulse-border font-bold'
+  }
+  if (l.packet_loss > 0 || l.latency_ms >= 300) return 'text-danger bg-danger/15'
+  if (l.latency_ms >= 180) return 'text-warning bg-warning/15'
+  if (l.latency_ms >= 80) return 'text-info bg-info/10'
+  return 'text-success bg-success/10'
+}
+
+/** 胶囊内显示文本 */
+function latencyText(l: LatencyLive): string {
+  if (l.packet_loss >= 100) return '超时'
+  return `${Math.round(l.latency_ms)}ms`
+}
+
+/** 悬浮提示：地址 / 抖动 / 丢包率 */
+function latencyTitle(l: LatencyLive): string {
+  return `${l.target_name} ${l.target} · 延迟 ${l.latency_ms.toFixed(1)}ms · 抖动 ${l.jitter_ms.toFixed(1)}ms · 丢包 ${l.packet_loss.toFixed(0)}%`
+}
 
 // 状态边框
 const borderClass = computed(() => {
@@ -186,7 +215,7 @@ const chips = computed(() => {
     <!-- 在线：核心指标 -->
     <template v-if="isOnline">
       <!-- CPU -->
-      <div class="mb-2.5">
+      <div v-if="showMetric('cpu')" class="mb-2.5">
         <div class="flex items-center justify-between text-xs">
           <span class="flex items-center gap-1.5 text-muted">
             CPU
@@ -205,7 +234,7 @@ const chips = computed(() => {
       </div>
 
       <!-- 内存 + Swap -->
-      <div class="mb-2.5">
+      <div v-if="showMetric('memory')" class="mb-2.5">
         <div class="flex items-center justify-between text-xs">
           <span class="text-muted">内存 <span class="text-[10px] text-muted/80">{{ swapText }}</span></span>
           <span class="flex items-center gap-2">
@@ -216,8 +245,39 @@ const chips = computed(() => {
         <UsageBar :value="m?.memoryPercent ?? 0" class="mt-1.5" />
       </div>
 
+      <!-- 负载 (load1) -->
+      <div v-if="showMetric('load')" class="mb-2.5">
+        <div class="flex items-center justify-between text-xs">
+          <span class="text-muted">负载</span>
+          <span class="flex items-center gap-2">
+            <Sparkline v-if="loadSpark.length > 1" :data="loadSpark" :width="compact ? 60 : 72" :height="20" color="rgb(var(--warning))" />
+            <span
+              class="w-12 text-right font-mono font-medium"
+              :class="m && agent.cpu_cores && m.load1 / agent.cpu_cores > 1 ? 'text-warning' : ''"
+            >{{ m ? m.load1.toFixed(2) : '--' }}</span>
+          </span>
+        </div>
+      </div>
+
+      <!-- TCP Ping 延迟胶囊条 -->
+      <div v-if="showMetric('latency') && m?.latencies?.length" class="mb-2.5 flex flex-wrap gap-1">
+        <span
+          v-for="l in m.latencies"
+          :key="l.target"
+          class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none"
+          :class="latencyClass(l)"
+          :title="latencyTitle(l)"
+        >
+          <span class="opacity-80">{{ l.target_name }}</span>
+          <span class="font-mono">{{ latencyText(l) }}</span>
+        </span>
+      </div>
+
       <!-- 实时速率 -->
-      <div class="flex items-center justify-between gap-2 border-t border-line/60 pt-2.5 text-xs">
+      <div
+        v-if="showMetric('network')"
+        class="flex items-center justify-between gap-2 border-t border-line/60 pt-2.5 text-xs"
+      >
         <span class="flex items-center gap-1.5">
           <svg class="h-3 w-3 animate-arrow-down text-success" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
             <path d="M6 10 L1 4h3V1h4v3h3z" />
@@ -233,7 +293,10 @@ const chips = computed(() => {
       </div>
 
       <!-- 累计总流量 + Uptime -->
-      <div class="mt-2 flex items-center justify-between gap-2 text-[10px]">
+      <div
+        v-if="showMetric('network')"
+        class="mt-2 flex items-center justify-between gap-2 text-[10px]"
+      >
         <span class="truncate font-mono text-muted" title="累计已用总流量">
           总 ↓ <span class="text-content/80">{{ totalTraffic.down }}</span>
           · ↑ <span class="text-content/80">{{ totalTraffic.up }}</span>

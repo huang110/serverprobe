@@ -29,7 +29,7 @@ const DEFAULTS: PersistedPrefs = {
   contrast: 'normal',
   density: 'comfortable',
   refreshInterval: 5,
-  cardMetrics: ['cpu', 'memory', 'load', 'network'],
+  cardMetrics: ['cpu', 'memory', 'load', 'network', 'latency'],
   viewMode: 'grid',
   hideIp: false
 }

@@ -26,6 +26,40 @@ export interface NetworkLive {
   tx_errors: number
 }
 
+/** 实时 TCP Ping 目标延迟（realtime / WS 的 latency 数组元素） */
+export interface LatencyLive {
+  /** 目标名，如 "电信" / "联通" / "移动" / "阿里DNS" / "Cloudflare" */
+  target_name: string
+  /** 目标地址，如 "202.102.192.68:53" */
+  target: string
+  /** TCP Ping 延迟 (ms)，100% 丢包时为 0 */
+  latency_ms: number
+  /** 抖动 (ms) */
+  jitter_ms: number
+  /** 丢包率 (%)，0 ~ 100 */
+  packet_loss: number
+}
+
+/** TCP Ping 历史中的单个数据点 */
+export interface LatencyPoint {
+  timestamp: number
+  latency_ms: number
+  jitter_ms: number
+  packet_loss: number
+}
+
+/** 单个探测目标的 TCP Ping 历史序列 */
+export interface LatencySeries {
+  target_name: string
+  target: string
+  points: LatencyPoint[]
+}
+
+/** GET /metrics/latency 返回结构（data 字段） */
+export interface LatencyHistoryResult {
+  series: LatencySeries[]
+}
+
 /**
  * GET /api/agents/:id/metrics/realtime 返回结构（data 字段）。
  * disk / network 为以挂载点、网卡名为 key 的映射，在 API 层归一化为数组。
@@ -68,6 +102,8 @@ export interface RealtimeMetricsRaw {
   last_heartbeat_at: number
   disk: Record<string, Partial<DiskLive>>
   network: Record<string, Partial<NetworkLive>>
+  /** 多目标 TCP Ping 实时延迟 */
+  latency?: LatencyLive[]
 }
 
 /** API 层归一化后的实时指标 */
@@ -95,6 +131,8 @@ export interface RealtimeMetrics {
   lastHeartbeatAt: number
   disks: DiskLive[]
   networks: NetworkLive[]
+  /** 多目标 TCP Ping 实时延迟 */
+  latencies: LatencyLive[]
 }
 
 /** 历史指标中的单个数据点 */
@@ -128,6 +166,8 @@ export interface RealtimeMetricsMessage {
   net_rx_total?: number
   net_tx_total?: number
   uptime?: number
+  /** 多目标 TCP Ping 实时延迟 */
+  latency?: LatencyLive[]
   timestamp: number
 }
 

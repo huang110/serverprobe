@@ -3,6 +3,8 @@ import apiClient from './client'
 import type {
   HistoryMetric,
   HistoryResult,
+  LatencyHistoryResult,
+  LatencyLive,
   RealtimeMetrics,
   RealtimeMetricsRaw
 } from '@/types/metrics'
@@ -36,6 +38,16 @@ export async function getHistoryMetrics(
   return data.data as HistoryResult
 }
 
+/** GET /api/agents/:id/metrics/latency 查询多目标 TCP Ping 历史延迟（公开免登录） */
+export async function getLatencyHistory(
+  agentId: string,
+  params: { start: number; end: number }
+): Promise<LatencyHistoryResult> {
+  const { data } = await apiClient.get(`/api/agents/${agentId}/metrics/latency`, { params })
+  if (!data?.success) throw new Error(data?.message || '获取 TCP Ping 历史失败')
+  return data.data as LatencyHistoryResult
+}
+
 /** 归一化实时指标：将 keyed map 转为数组 */
 export function normalizeRealtime(raw: RealtimeMetricsRaw): RealtimeMetrics {
   const disks = Object.entries(raw.disk || {}).map(([mountPoint, value]) => ({
@@ -52,6 +64,14 @@ export function normalizeRealtime(raw: RealtimeMetricsRaw): RealtimeMetrics {
     tx_bytes: Number(value.tx_bytes ?? 0),
     rx_errors: Number(value.rx_errors ?? 0),
     tx_errors: Number(value.tx_errors ?? 0)
+  }))
+
+  const latencies: LatencyLive[] = (raw.latency || []).map((item) => ({
+    target_name: item.target_name ?? '',
+    target: item.target ?? '',
+    latency_ms: Number(item.latency_ms ?? 0),
+    jitter_ms: Number(item.jitter_ms ?? 0),
+    packet_loss: Number(item.packet_loss ?? 0)
   }))
 
   return {
@@ -77,6 +97,7 @@ export function normalizeRealtime(raw: RealtimeMetricsRaw): RealtimeMetrics {
     status: raw.status ?? '',
     lastHeartbeatAt: Number(raw.last_heartbeat_at ?? 0),
     disks,
-    networks
+    networks,
+    latencies
   }
 }
