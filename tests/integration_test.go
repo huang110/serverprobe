@@ -317,6 +317,25 @@ func sendHeartbeat(t *testing.T, client pb.ProbeServiceClient, agentID, token st
 			RxBytesTotal:  10737418240,
 			TxBytesTotal:  5368709120,
 		}},
+		NetworkQuality: &pb.NetworkQualityMetrics{
+			LastCheckTime: timestamp - 3,
+			LatencyTests: []*pb.LatencyTest{
+				{
+					TargetName: "电信",
+					Target:     "202.102.192.68:53",
+					LatencyMs:  42.5,
+					JitterMs:   2.1,
+					PacketLoss: 0,
+				},
+				{
+					TargetName: "联通",
+					Target:     "210.22.70.3:53",
+					LatencyMs:  48.2,
+					JitterMs:   3.4,
+					PacketLoss: 33.33,
+				},
+			},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Heartbeat() failed: %v", err)
@@ -422,6 +441,43 @@ func Test19HeartbeatRealtimeAndWebSocket(t *testing.T) {
 		if realtime[field].(float64) != want {
 			t.Errorf("realtime %s = %v, want %v", field, realtime[field], want)
 		}
+	}
+
+	latency, _ := realtime["latency"].([]interface{})
+	if len(latency) != 2 {
+		t.Fatalf("realtime latency count = %d, want 2", len(latency))
+	}
+	firstLatency, _ := latency[0].(map[string]interface{})
+	if firstLatency["target_name"] != "电信" ||
+		firstLatency["target"] != "202.102.192.68:53" ||
+		firstLatency["latency_ms"].(float64) != 42.5 ||
+		firstLatency["jitter_ms"].(float64) != 2.1 {
+		t.Errorf("unexpected realtime latency item: %+v", firstLatency)
+	}
+	if latency[1].(map[string]interface{})["packet_loss"].(float64) != 33.33 {
+		t.Errorf("unexpected realtime latency packet loss: %+v", latency[1])
+	}
+
+	wsLatency, _ := data["latency"].([]interface{})
+	if len(wsLatency) != 2 || wsLatency[0].(map[string]interface{})["target_name"] != "电信" {
+		t.Errorf("unexpected websocket latency: %+v", data["latency"])
+	}
+
+	latencyPath := fmt.Sprintf("/api/agents/%s/metrics/latency?start=%d&end=%d",
+		agent.AgentId, timestamp-3600, timestamp+1)
+	status, body = doJSON(t, http.MethodGet, latencyPath, "", nil)
+	if status != http.StatusOK {
+		t.Fatalf("latency history status = %d, body=%+v", status, body)
+	}
+	latencyData, _ := body["data"].(map[string]interface{})
+	series, _ := latencyData["series"].([]interface{})
+	if len(series) != 2 {
+		t.Fatalf("latency history series = %d, want 2", len(series))
+	}
+	latencySeries, _ := series[0].(map[string]interface{})
+	latencyPoints, _ := latencySeries["points"].([]interface{})
+	if len(latencyPoints) == 0 {
+		t.Error("expected latency history points")
 	}
 
 	start := timestamp - 3600

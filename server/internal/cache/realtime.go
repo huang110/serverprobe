@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/huang110/serverprobe/server/internal/model"
 )
 
 const (
@@ -202,6 +205,70 @@ func (r *RedisClient) GetNetworkMetrics(agentID string) (map[string]string, erro
 	return r.client.HGetAll(r.ctx, realtimeNetworkKey(agentID)).Result()
 }
 
+// SaveLatencyMetrics 保存 TCP Ping 延迟指标，字段为 target_name -> JSON
+func (r *RedisClient) SaveLatencyMetrics(agentID string, items map[string]interface{}) error {
+	if agentID == "" {
+		return errors.New("agent id is required")
+	}
+
+	fields := make(map[string]interface{}, len(items))
+	for targetName, data := range items {
+		encoded, err := json.Marshal(data)
+		if err != nil {
+			return fmt.Errorf("failed to marshal latency metric for %s: %w", targetName, err)
+		}
+		fields[targetName] = string(encoded)
+	}
+
+	key := realtimeLatencyKey(agentID)
+	pipe := r.client.Pipeline()
+	pipe.Del(r.ctx, key)
+	if len(fields) > 0 {
+		pipe.HSet(r.ctx, key, fields)
+		pipe.Expire(r.ctx, key, realtimeMetricsTTL)
+	}
+	if _, err := pipe.Exec(r.ctx); err != nil {
+		return fmt.Errorf("failed to save latency metrics: %w", err)
+	}
+	return nil
+}
+
+// GetLatencyMetrics 获取 TCP Ping 延迟指标，返回 target_name -> JSON 字符串
+func (r *RedisClient) GetLatencyMetrics(agentID string) (map[string]string, error) {
+	if agentID == "" {
+		return nil, errors.New("agent id is required")
+	}
+	return r.client.HGetAll(r.ctx, realtimeLatencyKey(agentID)).Result()
+}
+
+// GetLatencyItems 获取并解析 TCP Ping 延迟指标，按 target_name 排序
+func (r *RedisClient) GetLatencyItems(agentID string) ([]model.LatencyItem, error) {
+	raw, err := r.GetLatencyMetrics(agentID)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]model.LatencyItem, 0, len(raw))
+	for targetName, payload := range raw {
+		var item model.LatencyItem
+		if err := json.Unmarshal([]byte(payload), &item); err != nil {
+			continue
+		}
+		if item.TargetName == "" {
+			item.TargetName = targetName
+		}
+		items = append(items, item)
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].TargetName == items[j].TargetName {
+			return items[i].Target < items[j].Target
+		}
+		return items[i].TargetName < items[j].TargetName
+	})
+	return items, nil
+}
+
 // SaveAgentDetail 缓存 Agent 详情（JSON）
 func (r *RedisClient) SaveAgentDetail(agentID string, detail interface{}) error {
 	if agentID == "" {
@@ -291,6 +358,7 @@ func (r *RedisClient) DeleteAgentCache(agentID string) error {
 		realtimeMetricsKey(agentID),
 		realtimeDiskKey(agentID),
 		realtimeNetworkKey(agentID),
+		realtimeLatencyKey(agentID),
 		agentDetailKey(agentID),
 	)
 	pipe.ZRem(r.ctx, KeyOnlineAgents, agentID)
@@ -310,6 +378,10 @@ func realtimeDiskKey(agentID string) string {
 
 func realtimeNetworkKey(agentID string) string {
 	return strings.ReplaceAll(KeyRealtimeNetwork, "{agent_id}", agentID)
+}
+
+func realtimeLatencyKey(agentID string) string {
+	return strings.ReplaceAll(KeyRealtimeLatency, "{agent_id}", agentID)
 }
 
 func agentDetailKey(agentID string) string {

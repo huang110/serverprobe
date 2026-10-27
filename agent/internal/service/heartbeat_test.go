@@ -115,6 +115,7 @@ labels:
   env: staging
 ip_quality:
   enabled: false
+  latency_targets: []
 log:
   level: "error"
   file: ""
@@ -487,10 +488,30 @@ func TestConvertMetrics(t *testing.T) {
 		}
 	})
 
+	t.Run("Latency", func(t *testing.T) {
+		got := convertLatencyMetrics([]collector.LatencyResult{
+			{
+				TargetName: "电信",
+				Target:     "202.102.192.68:53",
+				LatencyMs:  42.5,
+				JitterMs:   2.1,
+				PacketLoss: 33.33,
+			},
+		}, 1700000000)
+		if got == nil || len(got.LatencyTests) != 1 || got.LastCheckTime != 1700000000 {
+			t.Fatalf("unexpected latency conversion: %+v", got)
+		}
+		test := got.LatencyTests[0]
+		if test.TargetName != "电信" || test.Target != "202.102.192.68:53" ||
+			test.LatencyMs != 42.5 || test.JitterMs != 2.1 || test.PacketLoss != 33.33 {
+			t.Errorf("unexpected latency test: %+v", test)
+		}
+	})
+
 	t.Run("Nil", func(t *testing.T) {
 		if convertCPUMetrics(nil) != nil || convertMemMetrics(nil) != nil ||
 			convertSysMetrics(nil) != nil || convertDiskMetrics(nil) != nil ||
-			convertNetMetrics(nil) != nil {
+			convertNetMetrics(nil) != nil || convertLatencyMetrics(nil, 0) != nil {
 			t.Error("nil metrics should convert to nil")
 		}
 	})

@@ -77,6 +77,29 @@ monitor:
     - "squashfs"
     - "overlay"
 
+ip_quality:
+  # 是否启用 TCP Ping 延迟采集
+  enabled: true
+
+  # 探测间隔（秒）
+  check_interval: 15
+
+  # 首次安装快速检测
+  initial_fast_check: true
+
+  # 延迟测试目标（未指定端口时默认 443；8.8.8.8 / 114.114.114.114 默认 53）
+  latency_targets:
+    - name: "电信"
+      address: "202.102.192.68:53"
+    - name: "联通"
+      address: "210.22.70.3:53"
+    - name: "移动"
+      address: "211.136.192.6:53"
+    - name: "阿里DNS"
+      address: "223.5.5.5:443"
+    - name: "Cloudflare"
+      address: "1.1.1.1:443"
+
 log:
   level: "info"
   file: "/var/log/serverprobe/agent.log"

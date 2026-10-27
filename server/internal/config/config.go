@@ -152,6 +152,7 @@ func DefaultConfig() *Config {
 		},
 		HeartbeatInterval:   DefaultHeartbeatInterval,
 		TokenExpirationDays: DefaultTokenExpirationDays,
+		EnableIPQuality:     true,
 	}
 }
 
@@ -185,7 +186,7 @@ func Load(configPath string) (*Config, error) {
 	v.SetDefault("aggregation.include_current_bucket", false)
 	v.SetDefault("rate_limit.enabled", true)
 	v.SetDefault("rate_limit.requests_per_second", DefaultRateLimitPerSecond)
-	v.SetDefault("enable_ip_quality", false)
+	v.SetDefault("enable_ip_quality", true)
 
 	// 环境变量覆盖：SERVERPROBE_SERVER_HTTP_PORT 等
 	v.SetEnvPrefix("SERVERPROBE")

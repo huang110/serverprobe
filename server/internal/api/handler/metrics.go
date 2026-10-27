@@ -30,6 +30,21 @@ type MetricPoint struct {
 	Value     float64 `json:"value"`
 }
 
+// LatencyPoint TCP Ping 延迟历史点
+type LatencyPoint struct {
+	Timestamp  int64   `json:"timestamp"`
+	LatencyMs  float64 `json:"latency_ms"`
+	JitterMs   float64 `json:"jitter_ms"`
+	PacketLoss float64 `json:"packet_loss"`
+}
+
+// LatencySeries 单个 TCP Ping 目标的历史序列
+type LatencySeries struct {
+	TargetName string         `json:"target_name"`
+	Target     string         `json:"target"`
+	Points     []LatencyPoint `json:"points"`
+}
+
 // GetRealtimeMetrics GET /api/agents/:id/metrics/realtime
 func (h *MetricsHandler) GetRealtimeMetrics(c *gin.Context) {
 	agentID := c.Param("id")
@@ -66,6 +81,11 @@ func (h *MetricsHandler) GetRealtimeMetrics(c *gin.Context) {
 		}
 	}
 
+	latencyItems := make([]model.LatencyItem, 0)
+	if items, latencyErr := h.redis.GetLatencyItems(agentID); latencyErr == nil {
+		latencyItems = items
+	}
+
 	respondOK(c, gin.H{
 		"cpu_usage":         parseFloat(metrics["cpu_usage"]),
 		"cpu_steal":         parseFloat(metrics["cpu_steal"]),
@@ -90,6 +110,60 @@ func (h *MetricsHandler) GetRealtimeMetrics(c *gin.Context) {
 		"last_heartbeat_at": parseInt64Default(metrics["last_heartbeat_at"], 0),
 		"disk":              diskData,
 		"network":           networkData,
+		"latency":           latencyItems,
+	})
+}
+
+// GetLatencyHistory GET /api/agents/:id/metrics/latency
+func (h *MetricsHandler) GetLatencyHistory(c *gin.Context) {
+	agentID := c.Param("id")
+
+	now := time.Now().Unix()
+	start := parseInt64Default(c.Query("start"), now-3600)
+	end := parseInt64Default(c.Query("end"), now)
+	if end <= start {
+		respondError(c, http.StatusBadRequest, "invalid time range")
+		return
+	}
+
+	type targetRow struct {
+		TargetName string
+		Target     string
+	}
+	targets := make([]targetRow, 0)
+	if err := h.db.Model(&model.MetricsLatency{}).
+		Select("target_name, MAX(target) AS target").
+		Where("agent_id = ? AND timestamp >= ? AND timestamp <= ?", agentID, start, end).
+		Group("target_name").
+		Order("target_name ASC").
+		Scan(&targets).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, "failed to query latency metrics")
+		return
+	}
+
+	const maxPointsPerSeries = 2000
+	series := make([]LatencySeries, 0, len(targets))
+	for _, target := range targets {
+		points := make([]LatencyPoint, 0)
+		if err := h.db.Model(&model.MetricsLatency{}).
+			Select("timestamp, latency_ms, jitter_ms, packet_loss").
+			Where("agent_id = ? AND target_name = ? AND timestamp >= ? AND timestamp <= ?",
+				agentID, target.TargetName, start, end).
+			Order("timestamp ASC").
+			Limit(maxPointsPerSeries).
+			Scan(&points).Error; err != nil {
+			respondError(c, http.StatusInternalServerError, "failed to query latency metrics")
+			return
+		}
+		series = append(series, LatencySeries{
+			TargetName: target.TargetName,
+			Target:     target.Target,
+			Points:     points,
+		})
+	}
+
+	respondOK(c, gin.H{
+		"series": series,
 	})
 }
 

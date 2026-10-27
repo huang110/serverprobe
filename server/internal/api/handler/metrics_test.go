@@ -41,6 +41,18 @@ func TestGetRealtimeMetrics(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("failed to save network metrics: %v", err)
 	}
+	if err := api.redis.SaveLatencyMetrics("agent-1", map[string]interface{}{
+		"联通": model.LatencyItem{
+			TargetName: "联通", Target: "210.22.70.3:53",
+			LatencyMs: 48.2, JitterMs: 3.4, PacketLoss: 0,
+		},
+		"电信": model.LatencyItem{
+			TargetName: "电信", Target: "202.102.192.68:53",
+			LatencyMs: 42.5, JitterMs: 2.1, PacketLoss: 33.33,
+		},
+	}); err != nil {
+		t.Fatalf("failed to save latency metrics: %v", err)
+	}
 
 	recorder := performRequest(t, api.router, http.MethodGet, "/api/agents/agent-1/metrics/realtime", nil)
 	if recorder.Code != http.StatusOK {
@@ -79,6 +91,22 @@ func TestGetRealtimeMetrics(t *testing.T) {
 	network := data["network"].(map[string]interface{})
 	if network["eth0"].(map[string]interface{})["rx_bytes"].(float64) != 1024 {
 		t.Errorf("unexpected network data: %+v", network)
+	}
+
+	latency, ok := data["latency"].([]interface{})
+	if !ok || len(latency) != 2 {
+		t.Fatalf("unexpected latency data: %+v", data["latency"])
+	}
+	firstLatency := latency[0].(map[string]interface{})
+	if firstLatency["target_name"] != "电信" ||
+		firstLatency["target"] != "202.102.192.68:53" ||
+		firstLatency["latency_ms"].(float64) != 42.5 ||
+		firstLatency["jitter_ms"].(float64) != 2.1 ||
+		firstLatency["packet_loss"].(float64) != 33.33 {
+		t.Errorf("unexpected first latency item: %+v", firstLatency)
+	}
+	if latency[1].(map[string]interface{})["target_name"] != "联通" {
+		t.Errorf("latency should be sorted by target_name: %+v", latency)
 	}
 
 	recorder = performRequest(t, api.router, http.MethodGet, "/api/agents/missing/metrics/realtime", nil)

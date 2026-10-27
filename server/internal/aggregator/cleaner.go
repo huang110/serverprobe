@@ -107,6 +107,9 @@ func (c *Cleaner) CleanOldData(now time.Time) error {
 	if err := c.db.Where("timestamp < ?", rawThreshold).Delete(&model.MetricsNetwork{}).Error; err != nil {
 		return err
 	}
+	if err := c.db.Where("timestamp < ?", rawThreshold).Delete(&model.MetricsLatency{}).Error; err != nil {
+		return err
+	}
 
 	if err := c.db.Where("granularity = ? AND timestamp < ?", "5m",
 		now.AddDate(0, 0, -fiveMinuteRetentionDays).Unix()).

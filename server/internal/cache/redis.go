@@ -25,6 +25,9 @@ const (
 	// KeyRealtimeNetwork 网络实时指标 Hash，字段为 interface -> JSON
 	KeyRealtimeNetwork = "metrics:network:{agent_id}"
 
+	// KeyRealtimeLatency TCP Ping 延迟实时缓存 Hash，字段为 target_name -> JSON
+	KeyRealtimeLatency = "agent:latency:{agent_id}"
+
 	// KeyAgentDetail Agent 详情缓存，JSON 字符串
 	KeyAgentDetail = "agent:detail:{agent_id}"
 

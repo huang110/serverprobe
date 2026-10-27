@@ -47,4 +47,4 @@ rate_limit:
   enabled: true
   requests_per_second: 100
 
-enable_ip_quality: false
+enable_ip_quality: true

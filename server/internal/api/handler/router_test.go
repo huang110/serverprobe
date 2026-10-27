@@ -73,6 +73,7 @@ func setupTestAPI(t *testing.T) *testAPI {
 
 	router.GET("/api/agents/:id/metrics/realtime", metricsHandler.GetRealtimeMetrics)
 	router.GET("/api/agents/:id/metrics/history", metricsHandler.GetHistoryMetrics)
+	router.GET("/api/agents/:id/metrics/latency", metricsHandler.GetLatencyHistory)
 
 	router.POST("/api/alert/rules", alertHandler.CreateRule)
 	router.GET("/api/alert/rules", alertHandler.ListRules)

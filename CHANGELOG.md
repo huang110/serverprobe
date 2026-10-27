@@ -9,6 +9,7 @@
 
 ### 新增
 
+- 多目标 TCP Ping 延迟监控（RTT / Jitter / 丢包率），支持实时缓存、历史曲线和 WebSocket 推送
 - 游客免登录只读模式（Agent 列表、详情、实时/历史指标、WebSocket）
 - 游客访问时 IP / 内网 IP 自动脱敏
 - 实时指标新增累计流量、Uptime、进程数、CPU Steal/Iowait、Swap、TCP 连接数
@@ -17,6 +18,7 @@
 
 ### 变更
 
+- Agent 默认开启 TCP Ping 探测（15 秒间隔，内置电信/联通/移动/阿里DNS/Cloudflare 目标）
 - 默认心跳间隔从 30 秒调整为 5 秒
 - WebSocket 周期推送间隔从 30 秒调整为 10 秒
 - CPU 采集改为 500ms 采样并基于 delta 计算状态百分比

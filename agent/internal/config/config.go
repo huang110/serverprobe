@@ -86,13 +86,15 @@ func DefaultConfig() *Config {
 			ExcludeFSTypes:    []string{"tmpfs", "devtmpfs", "squashfs"},
 		},
 		IPQuality: IPQualityConfig{
-			Enabled:          false,
-			CheckInterval:    86400, // 1 day
+			Enabled:          true,
+			CheckInterval:    15,
 			InitialFastCheck: true,
 			LatencyTargets: []LatencyTarget{
-				{Name: "Google DNS", Address: "8.8.8.8"},
-				{Name: "Cloudflare DNS", Address: "1.1.1.1"},
-				{Name: "114 DNS", Address: "114.114.114.114"},
+				{Name: "电信", Address: "202.102.192.68:53"},
+				{Name: "联通", Address: "210.22.70.3:53"},
+				{Name: "移动", Address: "211.136.192.6:53"},
+				{Name: "阿里DNS", Address: "223.5.5.5:443"},
+				{Name: "Cloudflare", Address: "1.1.1.1:443"},
 			},
 		},
 		Log: LogConfig{
@@ -151,5 +153,8 @@ func (c *Config) GetCollectInterval() time.Duration {
 
 // GetIPQualityInterval 获取 IP 质量检测间隔
 func (c *Config) GetIPQualityInterval() time.Duration {
+	if c == nil || c.IPQuality.CheckInterval <= 0 {
+		return 15 * time.Second
+	}
 	return time.Duration(c.IPQuality.CheckInterval) * time.Second
 }

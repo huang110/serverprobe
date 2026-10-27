@@ -40,6 +40,9 @@ type HeartbeatService struct {
 	netCollector  *collector.NetworkCollector
 	sysCollector  *collector.SystemCollector
 
+	// latencyCollector 多目标 TCP Ping 延迟采集器，未配置目标时为 nil
+	latencyCollector *collector.LatencyCollector
+
 	mu        sync.Mutex
 	interval  time.Duration
 	failures  int
@@ -75,6 +78,12 @@ func NewHeartbeatService(grpcClient *client.GRPCClient, cfg *config.Config, load
 			collector.WithNetworkInterfaces(cfg.Monitor.NetworkInterfaces),
 		)
 		service.sysCollector = collector.NewSystemCollector()
+		if len(cfg.IPQuality.LatencyTargets) > 0 {
+			service.latencyCollector = collector.NewLatencyCollector(
+				cfg.IPQuality.LatencyTargets,
+				collector.WithLatencyCheckInterval(cfg.GetIPQualityInterval()),
+			)
+		}
 	} else {
 		service.cpuCollector = collector.NewCPUCollector()
 		service.memCollector = collector.NewMemoryCollector()
@@ -212,15 +221,16 @@ func (h *HeartbeatService) sendHeartbeat() error {
 	signature := client.GenerateSignature(h.config.Agent.ID, timestamp, h.config.Agent.Token)
 
 	request := &pb.HeartbeatRequest{
-		AgentId:     h.config.Agent.ID,
-		Timestamp:   timestamp,
-		Signature:   signature,
-		Cpu:         convertCPUMetrics(metrics.cpu),
-		Memory:      convertMemMetrics(metrics.memory),
-		Disks:       convertDiskMetrics(metrics.disks),
-		Networks:    convertNetMetrics(metrics.networks),
-		System:      convertSysMetrics(metrics.system),
-		AgentStatus: h.buildAgentStatus(metrics.cpu, metrics.memory),
+		AgentId:        h.config.Agent.ID,
+		Timestamp:      timestamp,
+		Signature:      signature,
+		Cpu:            convertCPUMetrics(metrics.cpu),
+		Memory:         convertMemMetrics(metrics.memory),
+		Disks:          convertDiskMetrics(metrics.disks),
+		Networks:       convertNetMetrics(metrics.networks),
+		System:         convertSysMetrics(metrics.system),
+		NetworkQuality: convertLatencyMetrics(metrics.latency, metrics.latencyCheckedAt),
+		AgentStatus:    h.buildAgentStatus(metrics.cpu, metrics.memory),
 	}
 
 	response, err := h.grpcClient.Heartbeat(request)
@@ -273,6 +283,9 @@ type collectedMetrics struct {
 	disks    []collector.DiskMetrics
 	networks []collector.NetworkMetrics
 	system   *collector.SystemMetrics
+
+	latency          []collector.LatencyResult
+	latencyCheckedAt int64
 }
 
 // collectMetrics 并发执行所有采集器，避免 CPU 采集阻塞其他指标
@@ -326,6 +339,15 @@ func (h *HeartbeatService) collectMetrics() *collectedMetrics {
 			logger.Errorf("Failed to collect system metrics: %v", err)
 		}
 	}()
+
+	if h.latencyCollector != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			metrics.latency = h.latencyCollector.Collect()
+			metrics.latencyCheckedAt = h.latencyCollector.LastCheckTime()
+		}()
+	}
 
 	wg.Wait()
 	return metrics
@@ -404,9 +426,18 @@ func (h *HeartbeatService) applyConfigUpdate(update *pb.ConfigUpdate) bool {
 		changed = true
 	}
 
-	if h.config != nil && h.config.IPQuality.Enabled != update.EnableIpQuality {
-		h.config.IPQuality.Enabled = update.EnableIpQuality
-		changed = true
+	if h.config != nil {
+		if update.EnableIpQuality {
+			if !h.config.IPQuality.Enabled {
+				h.config.IPQuality.Enabled = true
+				changed = true
+			}
+		} else if h.config.IPQuality.Enabled && len(h.config.IPQuality.LatencyTargets) == 0 {
+			// 本地未配置延迟目标时才跟随服务端关闭，
+			// 避免服务端下发的默认 false 覆盖本地已开启的 TCP Ping 采集。
+			h.config.IPQuality.Enabled = false
+			changed = true
+		}
 	}
 
 	return changed
@@ -582,5 +613,28 @@ func convertSysMetrics(metrics *collector.SystemMetrics) *pb.SystemMetrics {
 		TcpTimeWait:    metrics.TcpTimeWait,
 		TcpCloseWait:   metrics.TcpCloseWait,
 		UdpConnections: metrics.UdpConnections,
+	}
+}
+
+// convertLatencyMetrics 转换 TCP Ping 延迟指标
+func convertLatencyMetrics(results []collector.LatencyResult, checkedAt int64) *pb.NetworkQualityMetrics {
+	if len(results) == 0 {
+		return nil
+	}
+
+	tests := make([]*pb.LatencyTest, 0, len(results))
+	for _, result := range results {
+		tests = append(tests, &pb.LatencyTest{
+			Target:     result.Target,
+			TargetName: result.TargetName,
+			LatencyMs:  result.LatencyMs,
+			JitterMs:   result.JitterMs,
+			PacketLoss: result.PacketLoss,
+		})
+	}
+
+	return &pb.NetworkQualityMetrics{
+		LatencyTests:  tests,
+		LastCheckTime: checkedAt,
 	}
 }

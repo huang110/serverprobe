@@ -103,6 +103,25 @@ func buildHeartbeatRequest(agent *model.Agent, timestamp int64) *pb.HeartbeatReq
 			RxErrors:      1,
 			TxErrors:      0,
 		}},
+		NetworkQuality: &pb.NetworkQualityMetrics{
+			LastCheckTime: timestamp - 5,
+			LatencyTests: []*pb.LatencyTest{
+				{
+					TargetName: "电信",
+					Target:     "202.102.192.68:53",
+					LatencyMs:  42.5,
+					JitterMs:   2.1,
+					PacketLoss: 0,
+				},
+				{
+					TargetName: "联通",
+					Target:     "210.22.70.3:53",
+					LatencyMs:  48.2,
+					JitterMs:   3.4,
+					PacketLoss: 33.33,
+				},
+			},
+		},
 	}
 }
 
@@ -166,6 +185,33 @@ func TestHeartbeatSuccess(t *testing.T) {
 	}
 	if network.Interface != "eth0" || network.RxBytes != 100 || network.TxBytes != 50 {
 		t.Errorf("unexpected network metrics: %+v", network)
+	}
+
+	var latencyRows []model.MetricsLatency
+	if err := db.Where("agent_id = ?", agent.ID).Order("target_name ASC").Find(&latencyRows).Error; err != nil {
+		t.Fatalf("metrics_latency not found: %v", err)
+	}
+	if len(latencyRows) != 2 {
+		t.Fatalf("metrics_latency row count = %d, want 2", len(latencyRows))
+	}
+	if latencyRows[0].TargetName != "电信" || latencyRows[0].Target != "202.102.192.68:53" ||
+		latencyRows[0].LatencyMs != 42.5 || latencyRows[0].Timestamp != timestamp-5 {
+		t.Errorf("unexpected latency row: %+v", latencyRows[0])
+	}
+	if latencyRows[1].PacketLoss != 33.33 {
+		t.Errorf("unexpected latency packet loss: %+v", latencyRows[1])
+	}
+
+	latencyItems, err := redisClient.GetLatencyItems(agent.ID)
+	if err != nil {
+		t.Fatalf("GetLatencyItems() failed: %v", err)
+	}
+	if len(latencyItems) != 2 {
+		t.Fatalf("cached latency count = %d, want 2", len(latencyItems))
+	}
+	if latencyItems[0].TargetName != "电信" || latencyItems[0].LatencyMs != 42.5 ||
+		latencyItems[1].TargetName != "联通" || latencyItems[1].JitterMs != 3.4 {
+		t.Errorf("unexpected cached latency items: %+v", latencyItems)
 	}
 
 	realtime, err := redisClient.GetRealtimeMetrics(agent.ID)
@@ -410,6 +456,37 @@ func TestHeartbeatMissingMetricsAreSafe(t *testing.T) {
 	}
 	if !resp.Success {
 		t.Errorf("Heartbeat() with nil metrics failed: %s", resp.Message)
+	}
+}
+
+func TestHeartbeatLatencyDeduplication(t *testing.T) {
+	db := setupTestDB(t)
+	redisClient := setupTestRedis(t)
+	svc := NewHeartbeatService(db, redisClient, &config.Config{HeartbeatInterval: 30})
+	agent := createTestAgent(t, db, "agent-1", "test-token", time.Now().Add(48*time.Hour).Unix())
+
+	timestamp := time.Now().Unix()
+	first := buildHeartbeatRequest(agent, timestamp)
+	first.NetworkQuality.LastCheckTime = timestamp
+	if _, err := svc.Heartbeat(context.Background(), first); err != nil {
+		t.Fatalf("first Heartbeat() returned error: %v", err)
+	}
+
+	// 心跳时间前进，但探测结果未刷新（LastCheckTime 相同），不应重复写入历史点
+	second := buildHeartbeatRequest(agent, timestamp+5)
+	second.NetworkQuality.LastCheckTime = timestamp
+	if _, err := svc.Heartbeat(context.Background(), second); err != nil {
+		t.Fatalf("second Heartbeat() returned error: %v", err)
+	}
+
+	var count int64
+	if err := db.Model(&model.MetricsLatency{}).
+		Where("agent_id = ?", agent.ID).
+		Count(&count).Error; err != nil {
+		t.Fatalf("failed to count latency metrics: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("latency row count = %d, want 2 (one per target)", count)
 	}
 }
 

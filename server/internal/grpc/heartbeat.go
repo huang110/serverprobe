@@ -114,6 +114,7 @@ func (s *HeartbeatService) Heartbeat(ctx context.Context, req *pb.HeartbeatReque
 
 	s.saveDiskMetrics(ctx, req)
 	s.saveNetworkMetrics(ctx, req)
+	s.saveLatencyMetrics(ctx, req)
 	s.updateRealtimeCache(ctx, req, totalRxBytes, totalTxBytes, totalRxBytesTotal, totalTxBytesTotal)
 
 	// Agent 状态更新失败不影响本次心跳
@@ -191,6 +192,76 @@ func (s *HeartbeatService) saveNetworkMetrics(ctx context.Context, req *pb.Heart
 		}
 		if err := s.db.WithContext(ctx).Create(&metricsNetwork).Error; err != nil {
 			log.Printf("warning: failed to save network metrics for %s: %v", network.Interface, err)
+		}
+	}
+}
+
+// saveLatencyMetrics 保存 TCP Ping 延迟明细并更新 Redis 实时缓存
+func (s *HeartbeatService) saveLatencyMetrics(ctx context.Context, req *pb.HeartbeatRequest) {
+	quality := req.NetworkQuality
+	if quality == nil || len(quality.LatencyTests) == 0 {
+		return
+	}
+
+	timestamp := req.Timestamp
+	if quality.LastCheckTime > 0 {
+		timestamp = quality.LastCheckTime
+	}
+
+	records := make([]model.MetricsLatency, 0, len(quality.LatencyTests))
+	cacheItems := make(map[string]interface{}, len(quality.LatencyTests))
+
+	for _, test := range quality.LatencyTests {
+		if test == nil || strings.TrimSpace(test.Target) == "" {
+			continue
+		}
+
+		targetName := strings.TrimSpace(test.TargetName)
+		if targetName == "" {
+			targetName = test.Target
+		}
+
+		item := model.LatencyItem{
+			TargetName: targetName,
+			Target:     test.Target,
+			LatencyMs:  test.LatencyMs,
+			JitterMs:   test.JitterMs,
+			PacketLoss: test.PacketLoss,
+		}
+		cacheItems[targetName] = item
+		records = append(records, model.MetricsLatency{
+			AgentID:    req.AgentId,
+			TargetName: targetName,
+			Target:     test.Target,
+			Timestamp:  timestamp,
+			LatencyMs:  test.LatencyMs,
+			JitterMs:   test.JitterMs,
+			PacketLoss: test.PacketLoss,
+		})
+	}
+
+	if len(records) == 0 {
+		return
+	}
+
+	// Agent 每 check_interval 才刷新一次探测结果，心跳可能重复携带同一批数据。
+	// 使用 Agent 报告的 LastCheckTime 去重，避免写入重复历史点。
+	var lastTimestamp int64
+	if err := s.db.WithContext(ctx).Model(&model.MetricsLatency{}).
+		Where("agent_id = ?", req.AgentId).
+		Order("id DESC").
+		Limit(1).
+		Pluck("timestamp", &lastTimestamp).Error; err != nil {
+		log.Printf("warning: failed to query last latency metrics for %s: %v", req.AgentId, err)
+	} else if lastTimestamp != timestamp {
+		if err := s.db.WithContext(ctx).Create(&records).Error; err != nil {
+			log.Printf("warning: failed to save latency metrics for %s: %v", req.AgentId, err)
+		}
+	}
+
+	if s.redis != nil {
+		if err := s.redis.SaveLatencyMetrics(req.AgentId, cacheItems); err != nil {
+			log.Printf("warning: failed to cache latency metrics for %s: %v", req.AgentId, err)
 		}
 	}
 }

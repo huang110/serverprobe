@@ -48,6 +48,7 @@
 - `GET /api/agents/:id`
 - `GET /api/agents/:id/metrics/realtime`
 - `GET /api/agents/:id/metrics/history`
+- `GET /api/agents/:id/metrics/latency`
 - `GET /ws`（不传 token 时为游客只读连接）
 
 携带有效 `Authorization: Bearer <JWT>` 时，返回完整数据。
@@ -131,6 +132,15 @@
   "process_count": 128,
   "tcp_established": 42,
   "tcp_time_wait": 5,
+  "latency": [
+    {
+      "target_name": "电信",
+      "target": "202.102.192.68:53",
+      "latency_ms": 42.5,
+      "jitter_ms": 2.1,
+      "packet_loss": 0
+    }
+  ],
   "status": "online",
   "last_heartbeat_at": 1700000000,
   "disk": {},
@@ -148,6 +158,39 @@
 - `granularity`: `1m` / `5m` / `1h` / `1d`
 
 未指定 granularity 时自动选择；磁盘只支持 `1m`。
+
+### GET /api/agents/:id/metrics/latency
+
+TCP Ping 延迟历史曲线，按 `target_name` 分组。
+
+查询参数：
+
+- `start`: Unix 秒，默认 `now - 3600`
+- `end`: Unix 秒，默认 `now`
+
+```json
+{
+  "success": true,
+  "data": {
+    "series": [
+      {
+        "target_name": "电信",
+        "target": "202.102.192.68:53",
+        "points": [
+          {
+            "timestamp": 1793079800,
+            "latency_ms": 42.5,
+            "jitter_ms": 2.1,
+            "packet_loss": 0
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+每个序列最多返回 2000 个点，按 `timestamp ASC` 排序。
 
 ## 告警
 
@@ -232,3 +275,5 @@ ws://host/ws?token=<JWT>
 - `agent_status`
 - `realtime_metrics`
 - `alert`
+
+`realtime_metrics` 的 `data.latency` 字段为 TCP Ping 延迟数组，格式与实时指标接口的 `latency` 一致。

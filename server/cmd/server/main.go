@@ -257,6 +257,7 @@ func registerRoutes(router *gin.Engine, cfg *config.Config, db *gorm.DB, redisCl
 	metricsHandler := handler.NewMetricsHandler(db, redisClient)
 	public.GET("/agents/:id/metrics/realtime", metricsHandler.GetRealtimeMetrics)
 	public.GET("/agents/:id/metrics/history", metricsHandler.GetHistoryMetrics)
+	public.GET("/agents/:id/metrics/latency", metricsHandler.GetLatencyHistory)
 
 	// 管理接口：强制 JWT
 	protected := router.Group("/api")

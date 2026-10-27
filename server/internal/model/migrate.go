@@ -21,6 +21,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&MetricsAggregated{},
 		&MetricsDisk{},
 		&MetricsNetwork{},
+		&MetricsLatency{},
 		&AlertRule{},
 		&AlertRecord{},
 	); err != nil {

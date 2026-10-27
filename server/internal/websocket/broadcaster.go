@@ -156,7 +156,11 @@ func (b *Broadcaster) broadcastOnlineAgents(ctx context.Context) {
 		if err != nil {
 			continue
 		}
-		b.hub.Broadcast(buildRealtimeMessage(agentID, metrics, now))
+		latency, err := b.redis.GetLatencyItems(agentID)
+		if err != nil {
+			latency = nil
+		}
+		b.hub.Broadcast(buildRealtimeMessage(agentID, metrics, now, latency))
 		b.hub.Broadcast(buildAgentStatusMessage(agentID, "online", now))
 	}
 }
@@ -183,7 +187,11 @@ func (b *Broadcaster) handleMessage(ctx context.Context, payload []byte) {
 		if err != nil && !errors.Is(err, redis.Nil) {
 			log.Printf("warning: failed to load realtime metrics for %s: %v", event.AgentID, err)
 		}
-		b.hub.Broadcast(buildRealtimeMessage(event.AgentID, metrics, event.Timestamp))
+		latency, latencyErr := b.redis.GetLatencyItems(event.AgentID)
+		if latencyErr != nil {
+			log.Printf("warning: failed to load latency metrics for %s: %v", event.AgentID, latencyErr)
+		}
+		b.hub.Broadcast(buildRealtimeMessage(event.AgentID, metrics, event.Timestamp, latency))
 		b.hub.Broadcast(buildAgentStatusMessage(event.AgentID, "online", event.Timestamp))
 	case cache.EventTypeAlert:
 		b.hub.Broadcast(buildAlertMessage(event))
@@ -192,8 +200,17 @@ func (b *Broadcaster) handleMessage(ctx context.Context, payload []byte) {
 	}
 }
 
-// buildRealtimeMessage 构造实时指标消息
-func buildRealtimeMessage(agentID string, metrics map[string]string, timestamp int64) []byte {
+// buildRealtimeMessage 构造实时指标消息。
+// latencyItems 为可选参数，不传时输出空数组。
+func buildRealtimeMessage(agentID string, metrics map[string]string, timestamp int64, latencyItems ...[]model.LatencyItem) []byte {
+	var latency []model.LatencyItem
+	if len(latencyItems) > 0 {
+		latency = latencyItems[0]
+	}
+	if latency == nil {
+		latency = make([]model.LatencyItem, 0)
+	}
+
 	data := map[string]interface{}{
 		"agent_id":       agentID,
 		"cpu_usage":      parseFloat(metrics["cpu_usage"]),
@@ -206,6 +223,7 @@ func buildRealtimeMessage(agentID string, metrics map[string]string, timestamp i
 		"net_rx_total":   parseInt64(metrics["net_rx_total"]),
 		"net_tx_total":   parseInt64(metrics["net_tx_total"]),
 		"uptime":         parseInt64(metrics["uptime"]),
+		"latency":        latency,
 		"timestamp":      timestamp,
 	}
 	if data["timestamp"].(int64) == 0 {

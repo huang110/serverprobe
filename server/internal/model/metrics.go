@@ -117,3 +117,30 @@ type MetricsNetwork struct {
 func (MetricsNetwork) TableName() string {
 	return "metrics_network"
 }
+
+// MetricsLatency TCP Ping 延迟历史明细
+type MetricsLatency struct {
+	ID         uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	AgentID    string    `gorm:"size:64;not null;index:idx_agent_target_time,priority:1" json:"agent_id"`
+	TargetName string    `gorm:"size:100;not null;index:idx_agent_target_time,priority:2" json:"target_name"`
+	Target     string    `gorm:"size:255;not null" json:"target"`
+	Timestamp  int64     `gorm:"not null;index:idx_agent_target_time,priority:3" json:"timestamp"`
+	LatencyMs  float64   `json:"latency_ms"`
+	JitterMs   float64   `json:"jitter_ms"`
+	PacketLoss float64   `json:"packet_loss"`
+	CreatedAt  time.Time `gorm:"autoCreateTime;index" json:"created_at"`
+}
+
+// TableName 指定延迟指标表名
+func (MetricsLatency) TableName() string {
+	return "metrics_latency"
+}
+
+// LatencyItem 单个 TCP Ping 目标的实时/历史数据，JSON 字段与前后端契约一致
+type LatencyItem struct {
+	TargetName string  `json:"target_name"`
+	Target     string  `json:"target"`
+	LatencyMs  float64 `json:"latency_ms"`
+	JitterMs   float64 `json:"jitter_ms"`
+	PacketLoss float64 `json:"packet_loss"`
+}
