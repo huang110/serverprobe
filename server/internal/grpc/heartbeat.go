@@ -77,12 +77,15 @@ func (s *HeartbeatService) Heartbeat(ctx context.Context, req *pb.HeartbeatReque
 	}
 
 	var totalRxBytes, totalTxBytes int64
+	var totalRxBytesTotal, totalTxBytesTotal int64
 	for _, network := range req.Networks {
 		if network == nil {
 			continue
 		}
 		totalRxBytes += network.RxBytesPerSec
 		totalTxBytes += network.TxBytesPerSec
+		totalRxBytesTotal += network.RxBytesTotal
+		totalTxBytesTotal += network.TxBytesTotal
 	}
 
 	// 使用请求时间戳选择分区，避免月初边界写入错误分区
@@ -111,7 +114,7 @@ func (s *HeartbeatService) Heartbeat(ctx context.Context, req *pb.HeartbeatReque
 
 	s.saveDiskMetrics(ctx, req)
 	s.saveNetworkMetrics(ctx, req)
-	s.updateRealtimeCache(ctx, req, totalRxBytes, totalTxBytes)
+	s.updateRealtimeCache(ctx, req, totalRxBytes, totalTxBytes, totalRxBytesTotal, totalTxBytesTotal)
 
 	// Agent 状态更新失败不影响本次心跳
 	if err := s.db.WithContext(ctx).Model(&model.Agent{}).
@@ -193,7 +196,7 @@ func (s *HeartbeatService) saveNetworkMetrics(ctx context.Context, req *pb.Heart
 }
 
 // updateRealtimeCache 更新 Redis 实时缓存，失败不影响心跳
-func (s *HeartbeatService) updateRealtimeCache(ctx context.Context, req *pb.HeartbeatRequest, totalRxBytes, totalTxBytes int64) {
+func (s *HeartbeatService) updateRealtimeCache(ctx context.Context, req *pb.HeartbeatRequest, totalRxBytes, totalTxBytes, totalRxBytesTotal, totalTxBytesTotal int64) {
 	if s.redis == nil {
 		return
 	}
@@ -213,14 +216,22 @@ func (s *HeartbeatService) updateRealtimeCache(ctx context.Context, req *pb.Hear
 
 	realtimeMetrics := map[string]interface{}{
 		"cpu_usage":         cpu.UsagePercent,
+		"cpu_steal":         cpu.StealPercent,
+		"cpu_iowait":        cpu.IowaitPercent,
 		"memory_used":       memory.Used,
 		"memory_percent":    memory.UsagePercent,
+		"swap_total":        memory.SwapTotal,
+		"swap_used":         memory.SwapUsed,
 		"swap_percent":      memory.SwapUsagePercent,
 		"load1":             system.Load1,
 		"load5":             system.Load5,
 		"load15":            system.Load15,
 		"net_rx_bytes":      totalRxBytes,
 		"net_tx_bytes":      totalTxBytes,
+		"net_rx_total":      totalRxBytesTotal,
+		"net_tx_total":      totalTxBytesTotal,
+		"uptime":            system.Uptime,
+		"process_count":     system.ProcessCount,
 		"tcp_established":   system.TcpEstablished,
 		"tcp_time_wait":     system.TcpTimeWait,
 		"status":            agentStatusOnline,

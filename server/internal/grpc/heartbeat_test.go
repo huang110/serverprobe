@@ -56,10 +56,17 @@ func buildHeartbeatRequest(agent *model.Agent, timestamp int64) *pb.HeartbeatReq
 		AgentId:   agent.ID,
 		Timestamp: timestamp,
 		Signature: auth.GenerateSignature(agent.ID, timestamp, agent.Token),
-		Cpu:       &pb.CPUMetrics{UsagePercent: 25.5, UserPercent: 10, SystemPercent: 5},
+		Cpu: &pb.CPUMetrics{
+			UsagePercent:  25.5,
+			UserPercent:   10,
+			SystemPercent: 5,
+			StealPercent:  0.2,
+			IowaitPercent: 0.1,
+		},
 		Memory: &pb.MemoryMetrics{
 			Used:             2048,
 			UsagePercent:     50,
+			SwapTotal:        1024,
 			SwapUsed:         128,
 			SwapUsagePercent: 5,
 		},
@@ -67,6 +74,8 @@ func buildHeartbeatRequest(agent *model.Agent, timestamp int64) *pb.HeartbeatReq
 			Load1:          1.5,
 			Load5:          1.2,
 			Load15:         1.0,
+			Uptime:         518400,
+			ProcessCount:   128,
 			TcpEstablished: 10,
 			TcpTimeWait:    3,
 		},
@@ -87,6 +96,8 @@ func buildHeartbeatRequest(agent *model.Agent, timestamp int64) *pb.HeartbeatReq
 			IpAddress:     "10.0.0.5",
 			RxBytesPerSec: 100,
 			TxBytesPerSec: 50,
+			RxBytesTotal:  10737418240,
+			TxBytesTotal:  5368709120,
 			RxPackets:     10,
 			TxPackets:     5,
 			RxErrors:      1,
@@ -163,6 +174,23 @@ func TestHeartbeatSuccess(t *testing.T) {
 	}
 	if realtime["cpu_usage"] != "25.5" {
 		t.Errorf("cached cpu_usage = %q, want %q", realtime["cpu_usage"], "25.5")
+	}
+	expectedRealtime := map[string]string{
+		"cpu_steal":       "0.2",
+		"cpu_iowait":      "0.1",
+		"swap_total":      "1024",
+		"swap_used":       "128",
+		"uptime":          "518400",
+		"process_count":   "128",
+		"net_rx_total":    "10737418240",
+		"net_tx_total":    "5368709120",
+		"tcp_established": "10",
+		"tcp_time_wait":   "3",
+	}
+	for field, want := range expectedRealtime {
+		if realtime[field] != want {
+			t.Errorf("cached %s = %q, want %q", field, realtime[field], want)
+		}
 	}
 	online, err := redisClient.GetOnlineAgents(300)
 	if err != nil {

@@ -71,8 +71,14 @@ func TestHubRegisterUnregisterBroadcast(t *testing.T) {
 func TestBuildRealtimeMessage(t *testing.T) {
 	payload := buildRealtimeMessage("agent-1", map[string]string{
 		"cpu_usage":      "25.5",
+		"cpu_steal":      "0.2",
 		"memory_percent": "60",
+		"swap_percent":   "12.5",
 		"net_rx_bytes":   "1024",
+		"net_tx_bytes":   "512",
+		"net_rx_total":   "10737418240",
+		"net_tx_total":   "5368709120",
+		"uptime":         "518400",
 	}, 1700000000)
 
 	var message map[string]interface{}
@@ -85,6 +91,18 @@ func TestBuildRealtimeMessage(t *testing.T) {
 	data := message["data"].(map[string]interface{})
 	if data["agent_id"] != "agent-1" || data["cpu_usage"].(float64) != 25.5 {
 		t.Errorf("unexpected data: %+v", data)
+	}
+	expected := map[string]float64{
+		"cpu_steal":    0.2,
+		"swap_percent": 12.5,
+		"net_rx_total": 10737418240,
+		"net_tx_total": 5368709120,
+		"uptime":       518400,
+	}
+	for field, want := range expected {
+		if data[field].(float64) != want {
+			t.Errorf("%s = %v, want %v", field, data[field], want)
+		}
 	}
 }
 

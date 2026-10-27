@@ -14,8 +14,8 @@ server:
   client_key: ""
 
 monitor:
-  heartbeat_interval: 30
-  collect_interval: 30
+  heartbeat_interval: 5
+  collect_interval: 5
   network_interfaces:
     - "eth*"
     - "ens*"

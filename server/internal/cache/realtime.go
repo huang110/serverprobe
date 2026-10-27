@@ -78,6 +78,30 @@ func (r *RedisClient) UpdateOnlineAgent(agentID string, lastHeartbeat int64) err
 	return nil
 }
 
+// MarkAgentOffline 将实时缓存状态标记为 offline，并从在线集合移除
+func (r *RedisClient) MarkAgentOffline(agentID string) error {
+	if agentID == "" {
+		return errors.New("agent id is required")
+	}
+
+	key := realtimeMetricsKey(agentID)
+	pipe := r.client.Pipeline()
+	pipe.ZRem(r.ctx, KeyOnlineAgents, agentID)
+
+	exists, err := r.client.Exists(r.ctx, key).Result()
+	if err != nil {
+		return fmt.Errorf("failed to check realtime cache: %w", err)
+	}
+	if exists > 0 {
+		pipe.HSet(r.ctx, key, "status", "offline")
+	}
+
+	if _, err := pipe.Exec(r.ctx); err != nil {
+		return fmt.Errorf("failed to mark agent offline: %w", err)
+	}
+	return nil
+}
+
 // GetOnlineAgents 获取最近 threshold 秒内有过心跳的 Agent
 func (r *RedisClient) GetOnlineAgents(threshold int64) ([]string, error) {
 	if threshold <= 0 {

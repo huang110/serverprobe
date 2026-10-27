@@ -16,7 +16,7 @@ import (
 
 const (
 	// defaultHeartbeatInterval 配置缺失时使用的心跳间隔
-	defaultHeartbeatInterval = 30 * time.Second
+	defaultHeartbeatInterval = 5 * time.Second
 
 	// initialHeartbeatBackoff 心跳失败后的首次重试间隔
 	initialHeartbeatBackoff = time.Second

@@ -76,6 +76,8 @@ func setupTestAPI(t *testing.T) *testAPI {
 
 	router.POST("/api/alert/rules", alertHandler.CreateRule)
 	router.GET("/api/alert/rules", alertHandler.ListRules)
+	router.PUT("/api/alert/rules/:id", alertHandler.UpdateRule)
+	router.DELETE("/api/alert/rules/:id", alertHandler.DeleteRule)
 	router.GET("/api/alert/records", alertHandler.ListRecords)
 
 	return &testAPI{db: db, redis: redisClient, router: router}

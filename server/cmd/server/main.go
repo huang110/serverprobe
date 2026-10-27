@@ -72,7 +72,7 @@ func main() {
 	// WebSocket Hub 与事件广播器
 	hub := websocket.NewHub()
 	go hub.Run()
-	broadcaster := websocket.NewBroadcaster(hub, redisClient)
+	broadcaster := websocket.NewBroadcaster(hub, redisClient, db)
 	go broadcaster.Start()
 
 	// gRPC Server
@@ -246,21 +246,29 @@ func registerRoutes(router *gin.Engine, cfg *config.Config, db *gorm.DB, redisCl
 	router.POST("/api/auth/login", authHandler.Login)
 	router.GET("/ws", websocket.HandleWebSocket(hub, cfg.GetJWTSecret()))
 
+	// 公开只读接口：游客可访问，携带有效 JWT 时返回完整数据
+	public := router.Group("/api")
+	public.Use(middleware.OptionalJWTAuth(cfg.GetJWTSecret()))
+
+	agentHandler := handler.NewAgentHandler(db, redisClient)
+	public.GET("/agents", agentHandler.ListAgents)
+	public.GET("/agents/:id", agentHandler.GetAgent)
+
+	metricsHandler := handler.NewMetricsHandler(db, redisClient)
+	public.GET("/agents/:id/metrics/realtime", metricsHandler.GetRealtimeMetrics)
+	public.GET("/agents/:id/metrics/history", metricsHandler.GetHistoryMetrics)
+
+	// 管理接口：强制 JWT
 	protected := router.Group("/api")
 	protected.Use(middleware.JWTAuth(cfg.GetJWTSecret()))
 
-	agentHandler := handler.NewAgentHandler(db, redisClient)
-	protected.GET("/agents", agentHandler.ListAgents)
-	protected.GET("/agents/:id", agentHandler.GetAgent)
 	protected.PUT("/agents/:id", agentHandler.UpdateAgent)
 	protected.DELETE("/agents/:id", agentHandler.DeleteAgent)
-
-	metricsHandler := handler.NewMetricsHandler(db, redisClient)
-	protected.GET("/agents/:id/metrics/realtime", metricsHandler.GetRealtimeMetrics)
-	protected.GET("/agents/:id/metrics/history", metricsHandler.GetHistoryMetrics)
 
 	alertHandler := handler.NewAlertHandler(db)
 	protected.POST("/alert/rules", alertHandler.CreateRule)
 	protected.GET("/alert/rules", alertHandler.ListRules)
+	protected.PUT("/alert/rules/:id", alertHandler.UpdateRule)
+	protected.DELETE("/alert/rules/:id", alertHandler.DeleteRule)
 	protected.GET("/alert/records", alertHandler.ListRecords)
 }

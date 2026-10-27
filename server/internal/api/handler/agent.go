@@ -2,7 +2,9 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 
@@ -10,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/huang110/serverprobe/server/internal/cache"
+	"github.com/huang110/serverprobe/server/internal/middleware"
 	"github.com/huang110/serverprobe/server/internal/model"
 )
 
@@ -60,6 +63,12 @@ func (h *AgentHandler) ListAgents(c *gin.Context) {
 		return
 	}
 
+	if !middleware.IsAuthenticated(c) {
+		for index := range agents {
+			maskAgentIP(&agents[index])
+		}
+	}
+
 	respondOK(c, gin.H{
 		"agents":    agents,
 		"total":     total,
@@ -95,6 +104,10 @@ func (h *AgentHandler) GetAgent(c *gin.Context) {
 			log.Printf("warning: failed to get realtime metrics for %s: %v", agentID, err)
 			realtime = make(map[string]string)
 		}
+	}
+
+	if !middleware.IsAuthenticated(c) {
+		maskAgentIP(&agent)
 	}
 
 	respondOK(c, gin.H{
@@ -218,4 +231,34 @@ func replaceAgentLabels(tx *gorm.DB, agentID string, labels map[string]string) e
 		})
 	}
 	return tx.Create(&records).Error
+}
+
+// maskAgentIP 对游客隐藏 Agent 的精确 IP 和内网 IP
+func maskAgentIP(agent *model.Agent) {
+	if agent == nil {
+		return
+	}
+	agent.IP = maskIP(agent.IP)
+	agent.InternalIP = ""
+}
+
+// maskIP 对 IPv4/IPv6 地址进行脱敏。
+// IPv4 保留前两段；IPv6 保留前两段 hextet。
+func maskIP(raw string) string {
+	ip := net.ParseIP(strings.TrimSpace(raw))
+	if ip == nil {
+		return ""
+	}
+
+	if ipv4 := ip.To4(); ipv4 != nil {
+		return fmt.Sprintf("%d.%d.*.*", ipv4[0], ipv4[1])
+	}
+
+	ipv6 := ip.To16()
+	if ipv6 == nil {
+		return ""
+	}
+	first := uint16(ipv6[0])<<8 | uint16(ipv6[1])
+	second := uint16(ipv6[2])<<8 | uint16(ipv6[3])
+	return fmt.Sprintf("%x:%x:*:*:*:*:*:*", first, second)
 }

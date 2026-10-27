@@ -15,7 +15,7 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     networks:
       - serverprobe
     healthcheck:
@@ -32,7 +32,7 @@ services:
     volumes:
       - redis_data:/data
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     networks:
       - serverprobe
     healthcheck:
@@ -99,9 +99,12 @@ services:
       - ./agent/scripts:/app/scripts
     networks:
       - serverprobe
+    environment:
+      AGENT_HOSTNAME: ${AGENT_HOSTNAME:-}
     # 读取宿主机指标；生产环境请按需调整
     privileged: true
     pid: host
+    uts: host
 
 volumes:
   mysql_data:

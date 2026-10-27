@@ -18,7 +18,7 @@ redis:
 
 agent:
   register_secret: "change-me-in-production"
-  heartbeat_interval: 30
+  heartbeat_interval: 5
   token_expires_days: 7
 
 jwt:

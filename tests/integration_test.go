@@ -100,7 +100,7 @@ redis:
   db: 0
 agent:
   register_secret: "%s"
-  heartbeat_interval: 30
+  heartbeat_interval: 5
   token_expires_days: 7
 jwt:
   secret: "%s"
@@ -291,11 +291,32 @@ func sendHeartbeat(t *testing.T, client pb.ProbeServiceClient, agentID, token st
 		AgentId:   agentID,
 		Timestamp: timestamp,
 		Signature: signature(agentID, timestamp, token),
-		Cpu:       &pb.CPUMetrics{UsagePercent: cpu},
-		Memory:    &pb.MemoryMetrics{Used: 2048, UsagePercent: 50},
-		System:    &pb.SystemMetrics{Load1: 1.2, TcpEstablished: 3},
-		Disks:     []*pb.DiskMetrics{{MountPoint: "/", UsagePercent: 50}},
-		Networks:  []*pb.NetworkMetrics{{Interface: "eth0", RxBytesPerSec: 100, TxBytesPerSec: 50}},
+		Cpu: &pb.CPUMetrics{
+			UsagePercent:  cpu,
+			StealPercent:  0.2,
+			IowaitPercent: 0.1,
+		},
+		Memory: &pb.MemoryMetrics{
+			Used:         2048,
+			UsagePercent: 50,
+			SwapTotal:    1024,
+			SwapUsed:     128,
+		},
+		System: &pb.SystemMetrics{
+			Load1:          1.2,
+			Uptime:         518400,
+			ProcessCount:   128,
+			TcpEstablished: 3,
+			TcpTimeWait:    2,
+		},
+		Disks: []*pb.DiskMetrics{{MountPoint: "/", UsagePercent: 50}},
+		Networks: []*pb.NetworkMetrics{{
+			Interface:     "eth0",
+			RxBytesPerSec: 100,
+			TxBytesPerSec: 50,
+			RxBytesTotal:  10737418240,
+			TxBytesTotal:  5368709120,
+		}},
 	})
 	if err != nil {
 		t.Fatalf("Heartbeat() failed: %v", err)
@@ -323,12 +344,36 @@ func Test18AgentRegistration(t *testing.T) {
 		agent, _ := item.(map[string]interface{})
 		if agent["id"] == response.AgentId {
 			found = true
+			if agent["ip"] != "203.0.113.10" || agent["internal_ip"] != "10.0.0.5" {
+				t.Errorf("authenticated agent should expose full IP: %+v", agent)
+			}
 			break
 		}
 	}
 	if !found {
 		t.Errorf("registered agent %s not found in agent list", response.AgentId)
 	}
+
+	// 游客模式：不携带 JWT，IP 必须脱敏
+	status, body = doJSON(t, http.MethodGet, "/api/agents", "", nil)
+	if status != http.StatusOK {
+		t.Fatalf("guest GET /api/agents status = %d", status)
+	}
+	data, _ = body["data"].(map[string]interface{})
+	agents, _ = data["agents"].([]interface{})
+	for _, item := range agents {
+		agent, _ := item.(map[string]interface{})
+		if agent["id"] == response.AgentId {
+			if agent["ip"] != "203.0.*.*" {
+				t.Errorf("guest ip = %v, want 203.0.*.*", agent["ip"])
+			}
+			if agent["internal_ip"] != "" {
+				t.Errorf("guest internal_ip = %v, want empty", agent["internal_ip"])
+			}
+			return
+		}
+	}
+	t.Errorf("registered agent %s not found in guest list", response.AgentId)
 }
 
 func Test19HeartbeatRealtimeAndWebSocket(t *testing.T) {
@@ -360,6 +405,23 @@ func Test19HeartbeatRealtimeAndWebSocket(t *testing.T) {
 	realtime, _ := body["data"].(map[string]interface{})
 	if realtime["cpu_usage"].(float64) != 25.5 {
 		t.Errorf("realtime cpu = %v, want 25.5", realtime["cpu_usage"])
+	}
+	expectedRealtime := map[string]float64{
+		"net_rx_total":    10737418240,
+		"net_tx_total":    5368709120,
+		"uptime":          518400,
+		"process_count":   128,
+		"cpu_steal":       0.2,
+		"cpu_iowait":      0.1,
+		"swap_total":      1024,
+		"swap_used":       128,
+		"tcp_established": 3,
+		"tcp_time_wait":   2,
+	}
+	for field, want := range expectedRealtime {
+		if realtime[field].(float64) != want {
+			t.Errorf("realtime %s = %v, want %v", field, realtime[field], want)
+		}
 	}
 
 	start := timestamp - 3600
@@ -454,6 +516,21 @@ func Test21AlertFiringAndResolved(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("create rule status = %d, body=%+v", status, body)
 	}
+	ruleID := uint64(body["data"].(map[string]interface{})["id"].(float64))
+
+	updateBody, _ := json.Marshal(map[string]interface{}{
+		"name":     "Integration CPU Critical",
+		"duration": 2,
+		"enabled":  true,
+	})
+	status, body = doJSON(t, http.MethodPut, fmt.Sprintf("/api/alert/rules/%d", ruleID), token, updateBody)
+	if status != http.StatusOK {
+		t.Fatalf("update rule status = %d, body=%+v", status, body)
+	}
+	updatedRule := body["data"].(map[string]interface{})
+	if updatedRule["name"] != "Integration CPU Critical" || updatedRule["duration"].(float64) != 2 {
+		t.Errorf("rule update not applied: %+v", updatedRule)
+	}
 
 	wsURL := strings.Replace(baseURL, "http://", "ws://", 1) + "/ws?token=" + url.QueryEscape(token)
 	socket, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
@@ -487,6 +564,14 @@ func Test21AlertFiringAndResolved(t *testing.T) {
 	if !waitForRecordStatus(t, token, agent.AgentId, "resolved", 10*time.Second) {
 		t.Fatal("alert did not resolve")
 	}
+
+	status, body = doJSON(t, http.MethodDelete, fmt.Sprintf("/api/alert/rules/%d", ruleID), token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("delete rule status = %d, body=%+v", status, body)
+	}
+	if body["message"] != "rule deleted" {
+		t.Errorf("unexpected delete response: %+v", body)
+	}
 }
 
 func Test22CustomScripts(t *testing.T) {
@@ -517,6 +602,21 @@ func Test23WebSocketReconnect(t *testing.T) {
 	data, _ := message["data"].(map[string]interface{})
 	if data["agent_id"] != agent.AgentId {
 		t.Errorf("unexpected message after reconnect: %+v", data)
+	}
+
+	// 游客 WebSocket：无 token 允许连接，仅用于只读推送
+	guestURL := strings.Replace(baseURL, "http://", "ws://", 1) + "/ws"
+	guestSocket, _, err := websocket.DefaultDialer.Dial(guestURL, nil)
+	if err != nil {
+		t.Fatalf("guest websocket connection failed: %v", err)
+	}
+	defer guestSocket.Close()
+	if err := guestSocket.WriteMessage(websocket.TextMessage, []byte(`{"type":"ping"}`)); err != nil {
+		t.Fatalf("failed to send guest ping: %v", err)
+	}
+	pong := readWebSocketMessage(t, guestSocket, "pong", "", 6*time.Second)
+	if pong["type"] != "pong" {
+		t.Errorf("unexpected guest websocket response: %+v", pong)
 	}
 }
 

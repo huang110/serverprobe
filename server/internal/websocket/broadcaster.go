@@ -10,13 +10,21 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
 
 	"github.com/huang110/serverprobe/server/internal/cache"
+	"github.com/huang110/serverprobe/server/internal/model"
 )
 
 const (
 	// broadcastInterval 周期性推送在线指标间隔
-	broadcastInterval = 30 * time.Second
+	broadcastInterval = 10 * time.Second
+
+	// offlineCheckInterval 离线巡检间隔
+	offlineCheckInterval = 15 * time.Second
+
+	// offlineThreshold Agent 超过该秒数无心跳视为离线
+	offlineThreshold = 90
 
 	// onlineAgentThreshold 在线 Agent 判定阈值（秒）
 	onlineAgentThreshold = 300
@@ -26,6 +34,7 @@ const (
 type Broadcaster struct {
 	hub    *Hub
 	redis  *cache.RedisClient
+	db     *gorm.DB
 	stopCh chan struct{}
 	doneCh chan struct{}
 
@@ -33,39 +42,47 @@ type Broadcaster struct {
 }
 
 // NewBroadcaster 创建广播器
-func NewBroadcaster(hub *Hub, redisClient *cache.RedisClient) *Broadcaster {
+func NewBroadcaster(hub *Hub, redisClient *cache.RedisClient, db *gorm.DB) *Broadcaster {
 	return &Broadcaster{
 		hub:    hub,
 		redis:  redisClient,
+		db:     db,
 		stopCh: make(chan struct{}),
 		doneCh: make(chan struct{}),
 	}
 }
 
-// Start 订阅事件频道，阻塞运行直到 Stop
+// Start 订阅事件频道并运行离线巡检，阻塞运行直到 Stop
 func (b *Broadcaster) Start() {
 	defer close(b.doneCh)
 
-	if b.redis == nil {
-		log.Printf("warning: redis client is nil, websocket broadcaster disabled")
-		return
-	}
-
 	ctx := context.Background()
-	pubsub := b.redis.SubscribeEvents(ctx)
-	if pubsub == nil {
-		log.Printf("warning: failed to subscribe to agent events")
-		return
-	}
-	defer func() {
-		if err := pubsub.Close(); err != nil {
-			log.Printf("warning: failed to close event subscription: %v", err)
-		}
-	}()
 
-	channel := pubsub.Channel()
+	var channel <-chan *redis.Message
+	if b.redis != nil {
+		pubsub := b.redis.SubscribeEvents(ctx)
+		if pubsub != nil {
+			defer func() {
+				if err := pubsub.Close(); err != nil {
+					log.Printf("warning: failed to close event subscription: %v", err)
+				}
+			}()
+			channel = pubsub.Channel()
+		} else {
+			log.Printf("warning: failed to subscribe to agent events")
+		}
+	} else {
+		log.Printf("warning: redis client is nil, websocket event broadcast disabled")
+	}
+
 	ticker := time.NewTicker(broadcastInterval)
 	defer ticker.Stop()
+
+	offlineTicker := time.NewTicker(offlineCheckInterval)
+	defer offlineTicker.Stop()
+
+	// 启动时先清理一次历史离线 Agent
+	b.checkOfflineAgents(ctx)
 
 	for {
 		select {
@@ -76,14 +93,57 @@ func (b *Broadcaster) Start() {
 			b.handleMessage(ctx, []byte(message.Payload))
 		case <-ticker.C:
 			b.broadcastOnlineAgents(ctx)
+		case <-offlineTicker.C:
+			b.checkOfflineAgents(ctx)
 		case <-b.stopCh:
 			return
 		}
 	}
 }
 
+// checkOfflineAgents 扫描超时未心跳的 Agent，更新状态并广播
+func (b *Broadcaster) checkOfflineAgents(ctx context.Context) {
+	if b.db == nil {
+		return
+	}
+
+	threshold := time.Now().Unix() - offlineThreshold
+	var agents []model.Agent
+	if err := b.db.WithContext(ctx).
+		Where("status = ? AND last_heartbeat_at < ?", "online", threshold).
+		Find(&agents).Error; err != nil {
+		log.Printf("warning: failed to query offline agents: %v", err)
+		return
+	}
+
+	for _, agent := range agents {
+		result := b.db.WithContext(ctx).Model(&model.Agent{}).
+			Where("id = ? AND status = ?", agent.ID, "online").
+			Update("status", "offline")
+		if result.Error != nil {
+			log.Printf("warning: failed to mark agent %s offline: %v", agent.ID, result.Error)
+			continue
+		}
+		if result.RowsAffected == 0 {
+			continue
+		}
+
+		if b.redis != nil {
+			if err := b.redis.MarkAgentOffline(agent.ID); err != nil {
+				log.Printf("warning: failed to update redis status for offline agent %s: %v", agent.ID, err)
+			}
+		}
+
+		b.hub.Broadcast(buildAgentStatusMessage(agent.ID, "offline", agent.LastHeartbeatAt))
+		log.Printf("agent marked offline: %s", agent.ID)
+	}
+}
+
 // broadcastOnlineAgents 周期性推送所有在线 Agent 的实时指标
 func (b *Broadcaster) broadcastOnlineAgents(ctx context.Context) {
+	if b.redis == nil {
+		return
+	}
 	agents, err := b.redis.GetOnlineAgents(onlineAgentThreshold)
 	if err != nil {
 		log.Printf("warning: failed to load online agents: %v", err)
@@ -137,10 +197,15 @@ func buildRealtimeMessage(agentID string, metrics map[string]string, timestamp i
 	data := map[string]interface{}{
 		"agent_id":       agentID,
 		"cpu_usage":      parseFloat(metrics["cpu_usage"]),
+		"cpu_steal":      parseFloat(metrics["cpu_steal"]),
 		"memory_percent": parseFloat(metrics["memory_percent"]),
+		"swap_percent":   parseFloat(metrics["swap_percent"]),
 		"load1":          parseFloat(metrics["load1"]),
 		"net_rx_bytes":   parseInt64(metrics["net_rx_bytes"]),
 		"net_tx_bytes":   parseInt64(metrics["net_tx_bytes"]),
+		"net_rx_total":   parseInt64(metrics["net_rx_total"]),
+		"net_tx_total":   parseInt64(metrics["net_tx_total"]),
+		"uptime":         parseInt64(metrics["uptime"]),
 		"timestamp":      timestamp,
 	}
 	if data["timestamp"].(int64) == 0 {

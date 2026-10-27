@@ -171,8 +171,13 @@ func (r *RegisterService) internalIP() string {
 	return r.internalIPLookup()
 }
 
-// getHostname 获取主机名
+// getHostname 获取主机名。
+// Docker 部署时可通过 AGENT_HOSTNAME 覆盖，以获取宿主机真实主机名。
 func getHostname() (string, error) {
+	if hostname := strings.TrimSpace(os.Getenv("AGENT_HOSTNAME")); hostname != "" {
+		return hostname, nil
+	}
+
 	hostname, err := os.Hostname()
 	if err != nil {
 		return "", fmt.Errorf("os.Hostname failed: %w", err)

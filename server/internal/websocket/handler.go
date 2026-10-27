@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	gwebsocket "github.com/gorilla/websocket"
@@ -18,18 +19,21 @@ var upgrader = gwebsocket.Upgrader{
 }
 
 // HandleWebSocket GET /ws?token=xxx
+// 未传 token 时以游客身份建立只读连接；传入 token 时必须有效。
 func HandleWebSocket(hub *Hub, jwtSecret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		token := c.Query("token")
-		claims, err := middleware.ValidateJWT(token, jwtSecret)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-			return
-		}
+		token := strings.TrimSpace(c.Query("token"))
 
 		var expiresAt int64
-		if claims.ExpiresAt != nil {
-			expiresAt = claims.ExpiresAt.Unix()
+		if token != "" {
+			claims, err := middleware.ValidateJWT(token, jwtSecret)
+			if err != nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+				return
+			}
+			if claims.ExpiresAt != nil {
+				expiresAt = claims.ExpiresAt.Unix()
+			}
 		}
 
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)

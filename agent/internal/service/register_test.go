@@ -289,6 +289,19 @@ func TestRegisterMissingSecret(t *testing.T) {
 	}
 }
 
+// TestGetHostnameEnvOverride 验证 Docker 部署时可通过环境变量覆盖主机名
+func TestGetHostnameEnvOverride(t *testing.T) {
+	t.Setenv("AGENT_HOSTNAME", "docker-host-01")
+
+	hostname, err := getHostname()
+	if err != nil {
+		t.Fatalf("getHostname() failed: %v", err)
+	}
+	if hostname != "docker-host-01" {
+		t.Errorf("hostname = %q, want docker-host-01", hostname)
+	}
+}
+
 // TestFormatOSVersion 验证系统版本拼接逻辑
 func TestFormatOSVersion(t *testing.T) {
 	tests := []struct {

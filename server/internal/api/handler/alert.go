@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -69,6 +71,124 @@ func (h *AlertHandler) CreateRule(c *gin.Context) {
 	}
 
 	respondOK(c, rule)
+}
+
+// UpdateRule PUT /api/alert/rules/:id
+func (h *AlertHandler) UpdateRule(c *gin.Context) {
+	ruleID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || ruleID == 0 {
+		respondError(c, http.StatusBadRequest, "invalid rule id")
+		return
+	}
+
+	var request struct {
+		Name       *string  `json:"name"`
+		AgentID    *string  `json:"agent_id"`
+		Metric     *string  `json:"metric"`
+		Condition  *string  `json:"condition"`
+		Threshold  *float64 `json:"threshold"`
+		Duration   *int32   `json:"duration"`
+		Severity   *string  `json:"severity"`
+		WebhookURL *string  `json:"webhook_url"`
+		Enabled    *bool    `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		respondError(c, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	var rule model.AlertRule
+	if err := h.db.First(&rule, ruleID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			respondError(c, http.StatusNotFound, "rule not found")
+			return
+		}
+		respondError(c, http.StatusInternalServerError, "failed to query rule")
+		return
+	}
+
+	if request.Name != nil {
+		name := strings.TrimSpace(*request.Name)
+		if name == "" {
+			respondError(c, http.StatusBadRequest, "name is required")
+			return
+		}
+		rule.Name = name
+	}
+	if request.AgentID != nil {
+		rule.AgentID = strings.TrimSpace(*request.AgentID)
+	}
+	if request.Metric != nil {
+		metric := strings.TrimSpace(*request.Metric)
+		if !isValidAlertMetric(metric) {
+			respondError(c, http.StatusBadRequest, "invalid metric")
+			return
+		}
+		rule.Metric = metric
+	}
+	if request.Condition != nil {
+		condition := strings.TrimSpace(*request.Condition)
+		if !isValidAlertCondition(condition) {
+			respondError(c, http.StatusBadRequest, "invalid condition")
+			return
+		}
+		rule.Condition = condition
+	}
+	if request.Threshold != nil {
+		rule.Threshold = *request.Threshold
+	}
+	if request.Duration != nil {
+		if *request.Duration <= 0 {
+			respondError(c, http.StatusBadRequest, "duration must be positive")
+			return
+		}
+		rule.Duration = *request.Duration
+	}
+	if request.Severity != nil {
+		severity := strings.TrimSpace(*request.Severity)
+		if !isValidSeverity(severity) {
+			respondError(c, http.StatusBadRequest, "invalid severity")
+			return
+		}
+		rule.Severity = severity
+	}
+	if request.WebhookURL != nil {
+		rule.WebhookURL = strings.TrimSpace(*request.WebhookURL)
+	}
+	if request.Enabled != nil {
+		rule.Enabled = *request.Enabled
+	}
+
+	if err := h.db.Save(&rule).Error; err != nil {
+		respondError(c, http.StatusInternalServerError, "failed to update rule")
+		return
+	}
+
+	respondOK(c, rule)
+}
+
+// DeleteRule DELETE /api/alert/rules/:id
+func (h *AlertHandler) DeleteRule(c *gin.Context) {
+	ruleID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || ruleID == 0 {
+		respondError(c, http.StatusBadRequest, "invalid rule id")
+		return
+	}
+
+	result := h.db.Where("id = ?", ruleID).Delete(&model.AlertRule{})
+	if result.Error != nil {
+		respondError(c, http.StatusInternalServerError, "failed to delete rule")
+		return
+	}
+	if result.RowsAffected == 0 {
+		respondError(c, http.StatusNotFound, "rule not found")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "rule deleted",
+	})
 }
 
 // ListRules GET /api/alert/rules

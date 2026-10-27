@@ -13,10 +13,21 @@ func TestGetRealtimeMetrics(t *testing.T) {
 	api := setupTestAPI(t)
 
 	if err := api.redis.SaveRealtimeMetrics("agent-1", map[string]interface{}{
-		"cpu_usage":      25.5,
-		"memory_percent": 60.0,
-		"load1":          1.5,
-		"status":         "online",
+		"cpu_usage":       25.5,
+		"cpu_steal":       0.2,
+		"cpu_iowait":      0.1,
+		"memory_percent":  60.0,
+		"swap_total":      1024,
+		"swap_used":       128,
+		"swap_percent":    12.5,
+		"load1":           1.5,
+		"net_rx_total":    10737418240,
+		"net_tx_total":    5368709120,
+		"uptime":          518400,
+		"process_count":   128,
+		"tcp_established": 42,
+		"tcp_time_wait":   5,
+		"status":          "online",
 	}); err != nil {
 		t.Fatalf("failed to save realtime metrics: %v", err)
 	}
@@ -42,6 +53,24 @@ func TestGetRealtimeMetrics(t *testing.T) {
 	}
 	if data["memory_percent"].(float64) != 60 {
 		t.Errorf("memory_percent = %v, want 60", data["memory_percent"])
+	}
+	expected := map[string]float64{
+		"cpu_steal":       0.2,
+		"cpu_iowait":      0.1,
+		"swap_total":      1024,
+		"swap_used":       128,
+		"swap_percent":    12.5,
+		"net_rx_total":    10737418240,
+		"net_tx_total":    5368709120,
+		"uptime":          518400,
+		"process_count":   128,
+		"tcp_established": 42,
+		"tcp_time_wait":   5,
+	}
+	for field, want := range expected {
+		if data[field].(float64) != want {
+			t.Errorf("%s = %v, want %v", field, data[field], want)
+		}
 	}
 	disk := data["disk"].(map[string]interface{})
 	if disk["/"].(map[string]interface{})["usage_percent"].(float64) != 65 {

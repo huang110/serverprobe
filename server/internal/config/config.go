@@ -13,7 +13,7 @@ const Version = "1.0.1"
 
 const (
 	// DefaultHeartbeatInterval 默认心跳间隔（秒）
-	DefaultHeartbeatInterval = 30
+	DefaultHeartbeatInterval = 5
 
 	// DefaultTokenExpirationDays 默认 Token 有效期（天）
 	DefaultTokenExpirationDays = 7

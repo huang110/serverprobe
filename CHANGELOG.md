@@ -7,6 +7,22 @@
 
 ## [Unreleased]
 
+### 新增
+
+- 游客免登录只读模式（Agent 列表、详情、实时/历史指标、WebSocket）
+- 游客访问时 IP / 内网 IP 自动脱敏
+- 实时指标新增累计流量、Uptime、进程数、CPU Steal/Iowait、Swap、TCP 连接数
+- 告警规则更新与删除接口
+- Agent 离线自动巡检（90 秒无心跳标记 offline）
+
+### 变更
+
+- 默认心跳间隔从 30 秒调整为 5 秒
+- WebSocket 周期推送间隔从 30 秒调整为 10 秒
+- CPU 采集改为 500ms 采样并基于 delta 计算状态百分比
+- Docker MySQL/Redis 端口仅绑定 127.0.0.1
+- Demo Agent 使用宿主机 UTS 并支持 `AGENT_HOSTNAME` 覆盖
+
 ### 计划中
 
 - 自定义脚本指标采集

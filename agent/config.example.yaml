@@ -33,12 +33,12 @@ server:
 
 # 监控配置
 monitor:
-  # 心跳间隔（秒，默认 30）
+  # 心跳间隔（秒，默认 5）
   # 可选值：1, 5, 10, 30, 60
-  heartbeat_interval: 30
+  heartbeat_interval: 5
   
   # 数据采集间隔（秒，默认等于心跳间隔）
-  collect_interval: 30
+  collect_interval: 5
   
   # 网络接口过滤（支持通配符）
   network_interfaces:
