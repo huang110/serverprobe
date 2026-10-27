@@ -48,47 +48,110 @@ func TestNormalizeLatencyAddress(t *testing.T) {
 }
 
 func TestLatencyCollectorCollect(t *testing.T) {
-	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
-	var nowMu sync.Mutex
+	baseNow := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 
-	durations := map[string][]time.Duration{
-		"10.0.0.1:443": {30 * time.Millisecond, 40 * time.Millisecond, 50 * time.Millisecond},
-		"10.0.0.2:443": {10 * time.Millisecond, 20 * time.Millisecond},
+	tests := []struct {
+		name       string
+		target     config.LatencyTarget
+		durations  []time.Duration
+		failures   int
+		wantTarget string
+		wantLat    float64
+		wantJitter float64
+		wantLoss   float64
+	}{
+		{
+			name:       "电信",
+			target:     config.LatencyTarget{Name: "电信", Address: "10.0.0.1"},
+			durations:  []time.Duration{30 * time.Millisecond, 40 * time.Millisecond, 50 * time.Millisecond},
+			wantTarget: "10.0.0.1:443",
+			wantLat:    40,
+			wantJitter: 20,
+			wantLoss:   0,
+		},
+		{
+			name:       "联通",
+			target:     config.LatencyTarget{Name: "联通", Address: "10.0.0.2:443"},
+			durations:  []time.Duration{10 * time.Millisecond, 20 * time.Millisecond},
+			failures:   1,
+			wantTarget: "10.0.0.2:443",
+			wantLat:    15,
+			wantJitter: 10,
+			wantLoss:   100.0 / 3,
+		},
+		{
+			name:       "移动",
+			target:     config.LatencyTarget{Name: "移动", Address: "10.0.0.3:443"},
+			failures:   3,
+			wantTarget: "10.0.0.3:443",
+			wantLat:    0,
+			wantJitter: 0,
+			wantLoss:   100,
+		},
 	}
-	failures := map[string]int{"10.0.0.2:443": 1, "10.0.0.3:443": 3}
-	callCounts := make(map[string]int)
 
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			now := baseNow
+			attempts := 0
+			dialer := func(_, _ string, _ time.Duration) (net.Conn, error) {
+				index := attempts
+				attempts++
+				if index < test.failures {
+					return nil, errors.New("connection timeout")
+				}
+				sampleIndex := index - test.failures
+				if sampleIndex >= 0 && sampleIndex < len(test.durations) {
+					now = now.Add(test.durations[sampleIndex])
+				}
+				return latencyTestConn{}, nil
+			}
+
+			collector := NewLatencyCollector([]config.LatencyTarget{test.target},
+				WithLatencyDialer(dialer),
+				WithLatencyClock(func() time.Time { return now }),
+				WithLatencyProbeInterval(0),
+			)
+
+			results := collector.Collect()
+			if len(results) != 1 {
+				t.Fatalf("result count = %d, want 1", len(results))
+			}
+			result := results[0]
+			if result.Target != test.wantTarget {
+				t.Errorf("target = %q, want %q", result.Target, test.wantTarget)
+			}
+			if math.Abs(result.LatencyMs-test.wantLat) > 1e-9 {
+				t.Errorf("latency = %f, want %f", result.LatencyMs, test.wantLat)
+			}
+			if math.Abs(result.JitterMs-test.wantJitter) > 1e-9 {
+				t.Errorf("jitter = %f, want %f", result.JitterMs, test.wantJitter)
+			}
+			if math.Abs(result.PacketLoss-test.wantLoss) > 0.01 {
+				t.Errorf("packet loss = %f, want %f", result.PacketLoss, test.wantLoss)
+			}
+			if collector.LastCheckTime() != now.Unix() {
+				t.Errorf("LastCheckTime = %d, want %d", collector.LastCheckTime(), now.Unix())
+			}
+		})
+	}
+}
+
+// TestLatencyCollectorMultipleTargets 验证多目标并发采集不会丢失目标
+func TestLatencyCollectorMultipleTargets(t *testing.T) {
 	dialer := func(_, address string, _ time.Duration) (net.Conn, error) {
-		nowMu.Lock()
-		defer nowMu.Unlock()
-
-		index := callCounts[address]
-		callCounts[address] = index + 1
-
-		if index < failures[address] {
+		if address == "10.0.0.3:443" {
 			return nil, errors.New("connection timeout")
-		}
-
-		samples := durations[address]
-		sampleIndex := index - failures[address]
-		if sampleIndex >= 0 && sampleIndex < len(samples) {
-			now = now.Add(samples[sampleIndex])
 		}
 		return latencyTestConn{}, nil
 	}
 
-	targets := []config.LatencyTarget{
+	collector := NewLatencyCollector([]config.LatencyTarget{
 		{Name: "电信", Address: "10.0.0.1"},
 		{Name: "联通", Address: "10.0.0.2:443"},
 		{Name: "移动", Address: "10.0.0.3:443"},
-	}
-	collector := NewLatencyCollector(targets,
+	},
 		WithLatencyDialer(dialer),
-		WithLatencyClock(func() time.Time {
-			nowMu.Lock()
-			defer nowMu.Unlock()
-			return now
-		}),
 		WithLatencyProbeInterval(0),
 	)
 
@@ -101,42 +164,14 @@ func TestLatencyCollectorCollect(t *testing.T) {
 	for _, result := range results {
 		byName[result.TargetName] = result
 	}
-
-	telecom := byName["电信"]
-	if telecom.Target != "10.0.0.1:443" {
-		t.Errorf("telecom target = %q, want 10.0.0.1:443", telecom.Target)
+	if byName["电信"].Target != "10.0.0.1:443" {
+		t.Errorf("telecom target = %q, want 10.0.0.1:443", byName["电信"].Target)
 	}
-	if math.Abs(telecom.LatencyMs-40) > 1e-9 {
-		t.Errorf("telecom latency = %f, want 40", telecom.LatencyMs)
+	if byName["移动"].PacketLoss != 100 {
+		t.Errorf("mobile packet loss = %f, want 100", byName["移动"].PacketLoss)
 	}
-	if math.Abs(telecom.JitterMs-20) > 1e-9 {
-		t.Errorf("telecom jitter = %f, want 20", telecom.JitterMs)
-	}
-	if telecom.PacketLoss != 0 {
-		t.Errorf("telecom packet loss = %f, want 0", telecom.PacketLoss)
-	}
-
-	unicom := byName["联通"]
-	if math.Abs(unicom.LatencyMs-15) > 1e-9 {
-		t.Errorf("unicom latency = %f, want 15", unicom.LatencyMs)
-	}
-	if math.Abs(unicom.JitterMs-10) > 1e-9 {
-		t.Errorf("unicom jitter = %f, want 10", unicom.JitterMs)
-	}
-	if math.Abs(unicom.PacketLoss-100.0/3) > 0.01 {
-		t.Errorf("unicom packet loss = %f, want 33.33", unicom.PacketLoss)
-	}
-
-	mobile := byName["移动"]
-	if mobile.LatencyMs != 0 || mobile.JitterMs != 0 {
-		t.Errorf("mobile latency/jitter = %f/%f, want 0/0", mobile.LatencyMs, mobile.JitterMs)
-	}
-	if mobile.PacketLoss != 100 {
-		t.Errorf("mobile packet loss = %f, want 100", mobile.PacketLoss)
-	}
-
-	if collector.LastCheckTime() != now.Unix() {
-		t.Errorf("LastCheckTime = %d, want %d", collector.LastCheckTime(), now.Unix())
+	if byName["联通"].PacketLoss != 0 {
+		t.Errorf("unicom packet loss = %f, want 0", byName["联通"].PacketLoss)
 	}
 }
 
@@ -186,9 +221,12 @@ func TestLatencyCollectorEmptyTargets(t *testing.T) {
 }
 
 func TestLatencyCollectorNoPortDefault(t *testing.T) {
-	var dialed []string
+	var dialMu sync.Mutex
+	dialed := make(map[string]bool)
 	dialer := func(_, address string, _ time.Duration) (net.Conn, error) {
-		dialed = append(dialed, address)
+		dialMu.Lock()
+		dialed[address] = true
+		dialMu.Unlock()
 		return latencyTestConn{}, nil
 	}
 
@@ -202,14 +240,10 @@ func TestLatencyCollectorNoPortDefault(t *testing.T) {
 	)
 	collector.Collect()
 
-	seen := make(map[string]bool, len(dialed))
-	for _, address := range dialed {
-		seen[address] = true
-	}
-	if !seen["8.8.8.8:53"] {
+	if !dialed["8.8.8.8:53"] {
 		t.Errorf("8.8.8.8 should use port 53, dialed: %v", dialed)
 	}
-	if !seen["1.1.1.1:443"] {
+	if !dialed["1.1.1.1:443"] {
 		t.Errorf("1.1.1.1 should use port 443, dialed: %v", dialed)
 	}
 }
